@@ -1,0 +1,6 @@
+{
+  "name": "timeline",
+  "version": "0.1.0",
+  "description": "把这个 session 读成时间线：每段你发的话之后，实际发生了什么变化",
+  "types": "./types/index.d.ts"
+}
