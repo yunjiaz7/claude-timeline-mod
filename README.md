@@ -163,7 +163,12 @@ redraws the pane alone when it changes, and that redraw reuses the rows it
 already has rather than fetching the transcript again. A row reports as soon as
 it is drawn, which for the turn in flight is before the pane has met it, so
 rows are held by what they can be looked up by and resolved each time the
-marker is computed. On a surface that does not report
+marker is computed.
+
+Only the latest burst of reports is trusted. A fast scroll unmounts the rows it
+leaves without reporting them off, so a row still on record is not a row still
+on screen; a scroll step reports both edges together and a jump reports the
+whole new viewport, so the newest burst is always what is actually there. On a surface that does not report
 `onScreen`, nothing is marked.
 
 ## Rows are derived

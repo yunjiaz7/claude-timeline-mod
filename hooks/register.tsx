@@ -55,15 +55,21 @@ const markedAtom = atom({ plugin: 'timeline', key: 'marked' } as const, null)
  * resolving at report time dropped those rows for good and left the marker
  * one turn behind. They are resolved each time the marker is computed instead.
  */
-type Seen = { tool?: string; text?: string }
+type Seen = { tool?: string; text?: string; at: number }
 const visible = new Map<string, Seen>()
-let lastId: string | null = null
 let markedN: number | null = null
 let turnOfTool = new Map<string, number>()
 let turnOfText = new Map<string, number>()
 let latestN = 0
-/** A viewport cannot span this many turns; anything further is a missed report. */
-const SPAN = 20
+/**
+ * How long a report stays evidence, measured back from the newest one. A fast
+ * scroll unmounts the rows it leaves without ever reporting them off, so "is
+ * still in the map" cannot mean "is still on screen" — after a jump to the
+ * bottom the marker sat on a card from where the scroll began. Only the latest
+ * burst of reports is trusted: a scroll step reports both edges together, and
+ * a jump reports the whole new viewport, so the burst is always the truth.
+ */
+const FRESH_MS = 400
 
 function turnOf(seen: Seen): number | undefined {
   if (seen.tool !== undefined) {
@@ -75,19 +81,20 @@ function turnOf(seen: Seen): number | undefined {
 }
 
 function recompute($: EngineInterface): void {
-  const anchor = lastId === null ? undefined : visible.get(lastId)
-  const near = anchor === undefined ? undefined : turnOf(anchor)
+  let latest = 0
+  for (const seen of visible.values()) {
+    if (seen.at > latest) {
+      latest = seen.at
+    }
+  }
   let top: number | undefined
   for (const [id, seen] of visible) {
-    const n = turnOf(seen)
-    if (n === undefined) {
-      continue
-    }
-    if (near !== undefined && Math.abs(n - near) > SPAN) {
+    if (seen.at < latest - FRESH_MS) {
       visible.delete(id)
       continue
     }
-    if (top === undefined || n < top) {
+    const n = turnOf(seen)
+    if (n !== undefined && (top === undefined || n < top)) {
       top = n
     }
   }
@@ -101,21 +108,14 @@ function recompute($: EngineInterface): void {
   void $.ui.scroll({ to: { key: `t${now}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
 }
 
-function track($: EngineInterface, id: string, os: unknown, seen: Seen): void {
+function track($: EngineInterface, id: string, os: unknown, by: { tool?: string; text?: string }): void {
   if (os === undefined) {
     return
   }
   if (os === null) {
     visible.delete(id)
   } else {
-    visible.set(id, seen)
-    lastId = id
-    if (visible.size > 200) {
-      const oldest = visible.keys().next().value
-      if (oldest !== undefined) {
-        visible.delete(oldest)
-      }
-    }
+    visible.set(id, { ...by, at: Date.now() })
   }
   recompute($)
 }
