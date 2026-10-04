@@ -156,6 +156,15 @@ a session that mixes two reads as one.
 Changing it reloads the mod, and the stored summaries no longer match, so they
 are dropped and the next fill rewrites them — one call, not one per turn.
 
+## Following the transcript
+
+The row the transcript is showing is marked. The engine reports `onScreen` for
+the messages at the viewport's edges and only when it changes, so this needs no
+timer and no polling, and the pane is redrawn only when the marked row itself
+changes — a fast scroll past thirty rows costs the redraws of the rows it
+settles on, not one per scroll event. On a surface that does not report it,
+nothing is marked.
+
 ## Rows are derived
 
 Rows come from walking the whole transcript, so the walk is cached and redone

@@ -34,6 +34,22 @@ export function resolveLanguage(want: string): string | null {
 // row, always in the transcript) is the fallback that also covers history.
 const askIds = new Map<string, string>()
 
+/**
+ * Which messages the transcript is showing, by the same text key, and the row
+ * the pane therefore marks. The engine reports `onScreen` only for the messages
+ * at the viewport's edges and only when it changes, so this costs no polling
+ * and no timer — and the pane is redrawn only when the marked row itself
+ * changes, not on every scroll report.
+ */
+const onScreen = new Set<string>()
+let marked: string | null = null
+/** Row keys in transcript order, so the topmost visible one can be picked. */
+let lastSeen: string[] = []
+
+function keyOf(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 60)
+}
+
 // Rows are derived from the whole transcript, which a pane redraws often. The
 // walk is linear in the session, so cache it and only redo it when the
 // transcript has grown.
@@ -646,9 +662,24 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
-    const key = e.props.text.replace(/\s+/g, ' ').trim().slice(0, 60)
-    if (key !== '') {
-      askIds.set(key, e.requestId)
+    const key = keyOf(e.props.text)
+    if (key === '') {
+      return next(e)
+    }
+    askIds.set(key, e.requestId)
+
+    // `onScreen` is null while the row is drawn outside the viewport, and
+    // absent on a surface that does not say — then nothing is marked, which is
+    // a fine thing for it to do.
+    const was = marked
+    if (e.props.onScreen === null) {
+      onScreen.delete(key)
+    } else if (e.props.onScreen !== undefined) {
+      onScreen.add(key)
+    }
+    marked = onScreen.size === 0 ? null : (lastSeen.find(k => onScreen.has(k)) ?? null)
+    if (marked !== was) {
+      $.ui.invalidate('ui.render')
     }
 
     return next(e)
@@ -795,6 +826,7 @@ export const register: Register = (on, options) => {
     }
 
     const rows = rowsCached(messages)
+    lastSeen = rows.map(r => keyOf(r.ask))
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
     // What is left to write, counting a row that has only its ask: the trigger
     // below and the footer both read this, and counting only rows with nothing
@@ -834,8 +866,8 @@ export const register: Register = (on, options) => {
               marginTop={1}
               paddingX={1}
               borderStyle="round"
-              borderColor="promptBorder"
-              borderDimColor
+              borderColor={keyOf(row.ask) === marked ? 'claude' : 'promptBorder'}
+              borderDimColor={keyOf(row.ask) !== marked}
             >
               {/* The whole headline is the control: a row needs a jump, not a
                   word saying "jump". The focus ring and the pointer are the
