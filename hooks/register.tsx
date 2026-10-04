@@ -60,10 +60,38 @@ export function verbOf(cmd: string): string | null {
 // the engine's own framing. They open a segment too, but read differently.
 const INJECTED = /^\s*<(task-notification|command-name|local-command|system-reminder)/
 
+// A terminal lays out in cells, not code units: CJK, fullwidth forms and most
+// emoji take two. Truncating by length overflowed every Chinese headline by
+// about double and wrapped it under its own number.
+const WIDE = /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1FAFF}]/u
+
+export function cells(text: string): number {
+  let n = 0
+  for (const ch of text) {
+    n += WIDE.test(ch) ? 2 : 1
+  }
+
+  return n
+}
+
+/** Flatten to one line and cut it to `n` terminal cells, not `n` characters. */
 function head(text: string, n: number): string {
   const flat = text.replace(/<[^>]+>/g, ' ').split(/\s+/).join(' ').trim()
+  if (cells(flat) <= n) {
+    return flat
+  }
+  let out = ''
+  let used = 0
+  for (const ch of flat) {
+    const w = WIDE.test(ch) ? 2 : 1
+    if (used + w > n - 1) {
+      break
+    }
+    out += ch
+    used += w
+  }
 
-  return flat.length > n ? `${flat.slice(0, n)}…` : flat
+  return `${out}…`
 }
 
 function tally(items: string[], top: number): string {
@@ -322,7 +350,7 @@ export const register: Register = on => {
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
           const summary = row.anchor === undefined ? undefined : summaries[row.anchor]
           const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}`
-          const headline = `${mark}  ${head(row.ask, width - mark.length - 2)}`
+          const headline = `${mark}  ${head(row.ask, width - cells(mark) - 2)}`
 
           return (
             <Box

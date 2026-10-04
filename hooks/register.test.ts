@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { parseFill, rowsOf, verbOf } from './register'
+import { cells, parseFill, rowsOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -95,4 +95,12 @@ test('parseFill keeps the numbered lines and drops everything else', () => {
 
   expect(Object.keys(parsed)).toEqual(['3', '7', '12'])
   expect(parsed[7]).toBe('Fixed verbOf: every tally had read cd×N')
+})
+
+// A terminal lays out in cells: a Chinese headline cut by character count came
+// out about twice the pane width and wrapped under its own number.
+test('cells counts CJK as two and ASCII as one', () => {
+  expect(cells('abc')).toBe(3)
+  expect(cells('中文')).toBe(4)
+  expect(cells('❯ 17 那我')).toBe(9)
 })
