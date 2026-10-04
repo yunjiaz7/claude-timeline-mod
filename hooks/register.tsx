@@ -316,6 +316,18 @@ function head(text: string, n: number): string {
   return `${out}…`
 }
 
+/**
+ * The opening and the close of a long prompt. A paste usually comes first and
+ * the request after it, so the head alone handed the summariser the pasted
+ * text and none of what was being asked — it had nothing to answer and the row
+ * stayed raw.
+ */
+function excerpt(text: string, open: number, close: number): string {
+  const flat = text.replace(/<[^>]+>/g, ' ').split(/\s+/).join(' ').trim()
+
+  return flat.length <= open + close ? flat : `${flat.slice(0, open)} … ${flat.slice(-close)}`
+}
+
 function tally(items: string[], top: number): string {
   const counts = new Map<string, number>()
   for (const item of items) {
@@ -474,7 +486,7 @@ function onePrompt(row: Row, language: string): string {
     '',
     `Write both fields in ${language}, whatever language the turn itself is in.`,
     '',
-    `ASKED: ${head(row.ask, 400)}`,
+    `ASKED: ${excerpt(row.ask, 160, 400)}`,
     `DID:\n${row.body.slice(0, 5000)}`,
   ].join('\n')
 }
@@ -493,7 +505,7 @@ function asksPrompt(rows: Row[], language: string): string {
     '',
     `Write in ${language}, whatever language the ask itself is in.`,
     '',
-    ...rows.map(r => `${r.n}. ${head(r.ask, 110)}`),
+    ...rows.map(r => `${r.n}. ${excerpt(r.ask, 90, 260)}`),
   ].join('\n')
 }
 
@@ -517,7 +529,7 @@ function batchPrompt(rows: Row[], language: string): string {
     '',
     `Write both fields in ${language}, whatever language the turn is in.`,
     '',
-    ...rows.map(r => `--- ${r.n}\nASKED: ${head(r.ask, 200)}\nDID: ${r.body.slice(0, each)}`),
+    ...rows.map(r => `--- ${r.n}\nASKED: ${excerpt(r.ask, 90, 260)}\nDID: ${r.body.slice(0, each)}`),
   ].join('\n')
 }
 
@@ -689,7 +701,9 @@ async function runFill(
         const parsed = parseAsks(reply.text)
         for (const row of asksOnly) {
           const got = parsed[row.n]
-          if (got !== undefined) {
+          if (got === undefined) {
+            missed(row.key)
+          } else {
             summaries[row.key] = { ask: got, did: '' }
             written += 1
           }
