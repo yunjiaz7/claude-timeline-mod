@@ -99,6 +99,16 @@ What the model writes sits beside what the transcript recorded, never instead
 of it: the command tally stays, and an error is printed as the tool reported
 it. A summary of a failure reads "addressed the issue" far too easily.
 
+## Language
+
+Summaries are written in whatever `Summary language` is set to in `/config`
+(the `language` option: English, 中文, 日本語, Español, Français, Deutsch).
+They are written in that language whatever language the turn itself is in, so
+a session that mixes two reads as one.
+
+Changing it reloads the mod, and the stored summaries no longer match, so they
+are dropped and the next fill rewrites them — one call, not one per turn.
+
 ## Rows are derived
 
 Rows come from walking the whole transcript, so the walk is cached and redone

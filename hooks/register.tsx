@@ -239,7 +239,7 @@ function rowsCached(messages: readonly SessionMessage[]): Row[] {
  * at once: one call amortizes the cached-prefix read over all of them, where
  * one call per turn would pay that read again each time.
  */
-function fillPrompt(rows: Row[]): string {
+function fillPrompt(rows: Row[], language: string): string {
   const asked = rows.map(r => `${r.n}. ${head(r.ask, 110)}`).join('\n')
 
   return [
@@ -256,13 +256,15 @@ function fillPrompt(rows: Row[]): string {
     'If a turn failed, stalled or was abandoned, say so plainly — never smooth a',
     'failure into an accomplishment.',
     '',
+    `Write both fields in ${language}, whatever language the turn itself is in.`,
+    '',
     'Turns:',
     asked,
   ].join('\n')
 }
 
 /** The single-turn prompt, for `complete`, which sees only what it is given. */
-function onePrompt(row: Row): string {
+function onePrompt(row: Row, language: string): string {
   return [
     'Below is one turn of a coding session: what the user asked, then what the',
     'assistant replied and which tools it ran.',
@@ -273,6 +275,8 @@ function onePrompt(row: Row): string {
     'Name the concrete thing: the file, the fix, the finding, the number. If the',
     'turn failed or was abandoned, say so plainly — never smooth a failure into',
     'an accomplishment.',
+    '',
+    `Write both fields in ${language}, whatever language the turn itself is in.`,
     '',
     `ASKED: ${head(row.ask, 400)}`,
     `DID:\n${row.body.slice(0, 5000)}`,
@@ -322,7 +326,7 @@ function asText(rows: Row[], store: Record<string, Summary>): string {
  * Summarise every turn that has none, in one fork, and store the result.
  * Resolves a line saying what it cost, or '' when there was nothing to do.
  */
-async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promise<string> {
+async function runFill($: EngineInterface, rows: Row[], storeKey: string, language: string): Promise<string> {
   const missing = rows.filter(r => summaries[r.key] === undefined)
   if (missing.length === 0 || filling) {
     return ''
@@ -338,12 +342,12 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
     // one fork amortizes that read across all of them.
     const only = missing.length === 1 ? missing[0] : undefined
     const reply = only === undefined
-      ? await $.model.fork({ prompt: fillPrompt(missing) })
+      ? await $.model.fork({ prompt: fillPrompt(missing, language) })
       : await $.model.complete({
           model: 'haiku',
           effort: 'low',
           maxTokens: 200,
-          prompt: onePrompt(only),
+          prompt: onePrompt(only, language),
         })
     if (!reply.isAnswered) {
       return `could not summarise (${reply.reason})`
@@ -395,7 +399,7 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
   }
 }
 
-async function loadStore($: EngineInterface): Promise<string> {
+async function loadStore($: EngineInterface, language: string): Promise<string> {
   const storeKey = `timeline:${await $.session.id()}`
   if (!loaded) {
     spent = ((await $.store.get(`${storeKey}:spent`)) as Spent | undefined)
@@ -403,16 +407,26 @@ async function loadStore($: EngineInterface): Promise<string> {
     const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
     // v0 stored one string per turn. Those lack the ask side, so drop them and
     // let a fill write both — a refill is one call, not one per turn.
-    summaries = Object.fromEntries(
-      Object.entries(stored).filter(([, v]) => typeof v === 'object' && v !== null),
-    ) as Record<string, Summary>
+    // Summaries are written in one language; changing it in /config reloads
+    // the module, and the ones already stored no longer match, so they go.
+    const was = await $.store.get(`${storeKey}:language`)
+    summaries = was === language
+      ? (Object.fromEntries(
+          Object.entries(stored).filter(([, v]) => typeof v === 'object' && v !== null),
+        ) as Record<string, Summary>)
+      : {}
+    if (was !== language) {
+      await $.store.set(`${storeKey}:language`, language)
+    }
     loaded = true
   }
 
   return storeKey
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const language = String(options.language ?? 'English')
+
   // A pane is drawn when the engine asks, and new messages are not an ask.
   // Without this the pane sits on whatever the last draw found.
   on('turn.complete', ($, e, next) => {
@@ -454,46 +468,12 @@ export const register: Register = on => {
       return { text: `timeline: cannot read this session (${messages.deny})` }
     }
     const rows = rowsCached(messages)
-    const storeKey = await loadStore($)
+    const storeKey = await loadStore($, language)
 
     if (arg === 'fill') {
-      const missing = rows.filter(r => summaries[r.key] === undefined)
-      if (missing.length === 0) {
-        return { text: 'timeline: every turn already has a summary.' }
-      }
+      const line = await runFill($, rows, storeKey, language)
 
-      const reply = await $.model.fork({ prompt: fillPrompt(missing) })
-      if (!reply.isAnswered) {
-        return { text: `timeline: could not summarise (${reply.reason})` }
-      }
-
-      const parsed = parseFill(reply.text)
-      let written = 0
-      for (const row of missing) {
-        const got = parsed[row.n]
-        if (got !== undefined) {
-          summaries[row.key] = got
-          written += 1
-        }
-      }
-      await $.store.set(storeKey, summaries)
-      cache = null
-      $.ui.invalidate('ui.render')
-
-      // What it actually cost, measured. `cache_read` near zero means the
-      // prefix had lapsed and this fork paid full price for the transcript.
-      const u = reply.usage
-      function quotaOf(usage: { rateLimits: readonly { kind: string; percentUsed: number }[] }): number {
-  return usage.rateLimits.find(r => r.kind === 'five_hour')?.percentUsed ?? 0
-}
-
-const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
-      const cost = u === undefined
-        ? ''
-        : `\n  ${k(u.cache_read_input_tokens)} cached + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
-          + `${u.cache_read_input_tokens < u.input_tokens ? '  ← prefix had lapsed, this one paid full price' : ''}`
-
-      return { text: `timeline: summarised ${written} of ${missing.length} turns in one fork.${cost}` }
+      return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}` }
     }
 
     if (rows.length === 0) {
@@ -506,7 +486,7 @@ const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
       if (opened.isPlaced) {
         // Opening it is the signal that someone wants to read it: catch up on
         // whatever accumulated while it was closed, in one fork.
-        const line = await runFill($, rows, storeKey)
+        const line = await runFill($, rows, storeKey, language)
 
         return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
       }
@@ -527,7 +507,7 @@ const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
     // A reload empties the module's own variables while the store keeps its
     // summaries, and a draw can be the first thing to run after one — so the
     // drawing loads them itself rather than trusting a command to have run.
-    const storeKey = await loadStore($)
+    const storeKey = await loadStore($, language)
     const messages = await $.session.messages()
     if ('deny' in messages) {
       return <Text dimColor>cannot read this session</Text>
@@ -543,7 +523,7 @@ const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
     // summaries land on the redraw its own invalidate causes. `filling` and
     // the missing count bound it — once nothing is missing, no fork runs.
     if (unsummarised > 0 && !filling) {
-      void runFill($, rows, storeKey).then(line => {
+      void runFill($, rows, storeKey, language).then(line => {
         if (line !== '') {
           $.ui.log(`timeline: ${line}`)
         }

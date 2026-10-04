@@ -1,5 +1,21 @@
 {
   "name": "timeline",
   "version": "0.1.0",
-  "description": "Claude Code mod: what actually happened this session, turn by turn"
+  "description": "Claude Code mod: what actually happened this session, turn by turn",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "description": "Language the summaries are written in",
+      "options": [
+        "English",
+        "中文",
+        "日本語",
+        "Español",
+        "Français",
+        "Deutsch"
+      ],
+      "default": "中文",
+      "title": "Summary language"
+    }
+  }
 }
