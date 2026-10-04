@@ -92,6 +92,11 @@ it. A summary of a failure reads "addressed the issue" far too easily.
 Rows come from walking the whole transcript, so the walk is cached and redone
 only when the transcript grows. Nothing is accumulated as you work.
 
+A reload empties the module's own variables — the store survives it, the
+in-memory copy does not — so every path that reads summaries loads them first,
+drawing included. A path that trusts another to have loaded them shows an
+empty timeline after the next reload, with the data still on disk.
+
 ## Past sessions
 
 For a session that is no longer open:

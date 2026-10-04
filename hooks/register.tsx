@@ -461,6 +461,10 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
+    // A reload empties the module's own variables while the store keeps its
+    // summaries, and a draw can be the first thing to run after one — so the
+    // drawing loads them itself rather than trusting a command to have run.
+    await loadStore($)
     const messages = await $.session.messages()
     if ('deny' in messages) {
       return <Text dimColor>cannot read this session</Text>
