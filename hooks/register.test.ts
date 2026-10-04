@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cardOf, cells, chunksOf, costText, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cardOf, cells, chunksOf, costText, meterParts, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -208,4 +208,16 @@ test('cardOf reads the card off any of its lines and nothing off the search box'
   expect(cardOf('find')).toBe(null)
   expect(cardOf('find-back')).toBe(null)
   expect(cardOf(undefined)).toBe(null)
+})
+
+test('meterParts shows the figures and warns as each nears its edge', () => {
+  const text = (parts: { text: string }[]) => parts.map(p => p.text).join('')
+  const calm = meterParts({ context: 42, compactAt: 92, fiveHour: 23, sevenDay: 38 })
+  expect(text(calm.left)).toBe('Context 42% · compacts at 92%')
+  expect(text(calm.right)).toBe('5h 23%  7d 38%')
+  expect(calm.left[1]!.color).toBe('text')
+  expect(meterParts({ context: 85, compactAt: 92 }).left[1]!.color).toBe('warning')
+  expect(text(meterParts({ context: 10, compactAt: null }).left)).toBe('Context 10% · auto-compact off')
+  expect(meterParts({ fiveHour: 97 }).right[1]!.color).toBe('error')
+  expect(meterParts({}).left).toEqual([])
 })

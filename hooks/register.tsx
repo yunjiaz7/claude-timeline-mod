@@ -419,8 +419,8 @@ export function cardOf(key: string | null | undefined): number | null {
 /** Rows each drawn card takes, and the rows the pane shows: what following needs. */
 let heights: number[] = []
 let paneRows = 40
-/** The box, its status, its hint and the gap above the first card. */
-const HEAD_ROWS = 6
+/** The usage line, the box, its status, its hint and the gap above the first card. */
+const HEAD_ROWS = 7
 
 /**
  * The first card to draw so that card `at` is inside `room` rows: unchanged
@@ -1139,6 +1139,74 @@ async function runFill(
 
 let sessionKey: string | null = null
 
+/**
+ * The figures the usage line shows, as whole percentages. `compactAt` is where
+ * auto-compaction runs, as a share of the same window: null when it is off,
+ * undefined until read. Read at most every two seconds — the plain usage call
+ * is free, and the threshold comes once per turn from a local estimate.
+ */
+type Meter = { context?: number; compactAt?: number | null; fiveHour?: number; sevenDay?: number }
+let meter: Meter = {}
+let meterAt = 0
+let isCompactRead = false
+
+async function readMeter($: EngineInterface): Promise<void> {
+  if (Date.now() - meterAt < 2000) {
+    return
+  }
+  meterAt = Date.now()
+  const wantCompact = !isCompactRead
+  const usage = await $.session.usage(wantCompact ? { breakdown: 'summary' } : undefined)
+  const rate = (kind: string) => usage.rateLimits.find(r => r.kind === kind)?.percentUsed
+  let compactAt = meter.compactAt
+  if (wantCompact) {
+    isCompactRead = true
+    const breakdown = usage.context.breakdown
+    if (breakdown !== undefined) {
+      compactAt = breakdown.isAutoCompactEnabled && breakdown.autoCompactThreshold !== undefined && usage.context.window > 0
+        ? Math.round((100 * breakdown.autoCompactThreshold) / usage.context.window)
+        : null
+    }
+  }
+  meter = { context: usage.context.percent, compactAt, fiveHour: rate('five_hour'), sevenDay: rate('seven_day') }
+}
+
+/** A run of the usage line: its text and the theme colour it is drawn in. */
+type Part = { text: string; color: string; bold?: boolean }
+
+/**
+ * The usage line, left side and right side. A figure turns to the theme's
+ * warning colour when it is close to the point where something happens to it:
+ * within ten points of compaction, or past 80% of a rate window, and to the
+ * error colour past 95%.
+ */
+export function meterParts(m: Meter): { left: Part[]; right: Part[] } {
+  const label = (text: string): Part => ({ text, color: 'inactive' })
+  const figure = (n: number, isNear: boolean, isOver = false): Part => ({
+    text: `${Math.round(n)}%`,
+    color: isOver ? 'error' : isNear ? 'warning' : 'text',
+    bold: true,
+  })
+  const left: Part[] = []
+  if (m.context !== undefined) {
+    const isNear = typeof m.compactAt === 'number' && m.context >= m.compactAt - 10
+    left.push(label('Context '), figure(m.context, isNear))
+    if (typeof m.compactAt === 'number') {
+      left.push(label(` · compacts at ${m.compactAt}%`))
+    } else if (m.compactAt === null) {
+      left.push(label(' · auto-compact off'))
+    }
+  }
+  const right: Part[] = []
+  for (const [name, n] of [['5h', m.fiveHour], ['7d', m.sevenDay]] as const) {
+    if (n !== undefined) {
+      right.push(label(`${right.length > 0 ? '  ' : ''}${name} `), figure(n, n >= 80, n >= 95))
+    }
+  }
+
+  return { left, right }
+}
+
 async function loadStore($: EngineInterface, language: string): Promise<string> {
   // Asked once: the pane is drawn often and the session does not change.
   sessionKey ??= `timeline:${await $.session.id()}`
@@ -1197,6 +1265,7 @@ export const register: Register = (on, options) => {
   on('turn.start', ($, e, next) => {
     cache = null
     isRunning = true
+    isCompactRead = false
     saveIds($)
     $.ui.invalidate('ui.render')
 
@@ -1533,6 +1602,7 @@ export const register: Register = (on, options) => {
     // summaries, and a draw can be the first thing to run after one — so the
     // drawing loads them itself rather than trusting a command to have run.
     const storeKey = await loadStore($, language)
+    await readMeter($)
     // The transcript is fetched only when a turn or a fill has changed it. A
     // redraw because the marker moved reuses the rows it already has, so
     // scrolling does not pull the whole session across on every step.
@@ -1626,8 +1696,21 @@ export const register: Register = (on, options) => {
           ? `nothing matches "${head(query, 24)}"`
           : `${matches.length} match${matches.length > 1 ? 'es' : ''}, best first — click one to jump to it`
 
+    const { left, right } = meterParts(meter)
+    const run = (parts: Part[], at: string) => parts.map((part, i) => (
+      <Text key={`${at}${i}`} color={part.color} bold={part.bold}>{part.text}</Text>
+    ))
+
     return (
       <Box flexDirection="column" paddingRight={1}>
+        {/* What is left before the session compacts and before the rate
+            windows run out: figures only, coloured as they near the edge. */}
+        {(left.length > 0 || right.length > 0) && (
+          <Box flexDirection="row" justifyContent="space-between" paddingX={2}>
+            <Box flexDirection="row">{run(left, 'ml')}</Box>
+            <Box flexDirection="row">{run(right, 'mr')}</Box>
+          </Box>
+        )}
         {rows.length === 0 && <Text color="text" dimColor>Nothing yet.</Text>}
         {isFinding && Input !== undefined && (
           <Box flexDirection="column">

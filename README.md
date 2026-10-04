@@ -90,6 +90,20 @@ opened is still running. The reply pass follows in the same run, over the rows
 the ask pass just created, so a row reaches its full form without waiting for
 anything else to happen.
 
+## Usage line
+
+The top line of the pane shows how full the context window is and where
+auto-compaction will run, and how much of the five-hour and seven-day rate
+windows is used:
+
+```
+Context 29% · compacts at 84%                    5h 22%  7d 14%
+```
+
+A figure turns to the theme's warning colour within ten points of compaction
+or past 80% of a rate window, and to the error colour past 95%. The figures
+come from the session's own status-line data and cost nothing to read.
+
 ## Search
 
 The pane opens with a bordered search box at its top. `/timeline find` puts
