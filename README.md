@@ -96,8 +96,8 @@ anything else to happen.
 `/timeline find` again closes it. Type what you remember of a turn, in any
 words or language, and press Enter: one Haiku call reads every turn's
 summary and prompt and returns the ones that match by meaning, best first.
-The pane then shows only those cards — click one to jump to it. `[ show all ]`
-under the box brings every card back and `[ close ]` shuts the box.
+The pane then shows only those cards — click one to jump to it. `[ back to timeline ]`
+under the box leaves the results and shows every card again.
 While the box is open the pane's window does not move: the cards under the
 box are scrolled by the mod, a card per tick, so the box stays where it is
 without being redrawn.

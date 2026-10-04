@@ -1442,22 +1442,23 @@ export const register: Register = (on, options) => {
             <Box paddingX={2}>
               <Text color="inactive">{status}</Text>
             </Box>
-            {/* Ways out that need no typing: back to every card, or shut the
-                box. A primary Button is drawn in the accent, `[ so ]`. */}
-            <Box flexDirection="row" paddingX={2} gap={2}>
+            {/* The way out of the results that needs no typing: back to every
+                card, the box left open. A primary Button is drawn in the
+                accent, `[ so ]`. The box itself shuts with the command. */}
+            <Box flexDirection="row" paddingX={2} gap={1}>
               {matches !== null && (
                 <Button
-                  key="find-all"
+                  key="find-back"
                   variant="primary"
-                  label="show all"
+                  label="back to timeline"
                   onPress={() => {
                     void runFind($, rows, '')
                   }}
                 />
               )}
-              <Button key="find-close" variant="primary" label="close" onPress={() => closeFind($)} />
-              <Text color="inactive">or</Text>
+              {matches !== null && <Text color="inactive">·</Text>}
               <Text color="claude" bold>/timeline find</Text>
+              <Text color="inactive">closes the search box</Text>
             </Box>
           </Box>
         )}
