@@ -98,6 +98,11 @@ words or language, and press Enter: one Haiku call reads every turn's
 summary and prompt and returns the ones that match by meaning, best first.
 The pane then shows only those cards — click one to jump to it. `[ back to timeline ]`
 under the box leaves the results and shows every card again.
+With the pane holding the keyboard (click it, or the focus chord), ↑ and ↓
+move a highlight from card to card and Enter jumps to the one it is on; ↑
+from the first card goes to the search box. The wheel scrolls the cards and
+leaves the highlight on its card.
+
 While the box is open the pane's window does not move: the cards under the
 box are scrolled by the mod, a card per tick, so the box stays where it is
 without being redrawn.

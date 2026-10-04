@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, chunksOf, costText, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cardOf, cells, chunksOf, costText, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -199,4 +199,13 @@ test('fitTop moves the first card only as far as it takes to show the one asked 
   expect(fitTop(four, 0, 5, 12)).toBe(3)
   expect(fitTop(four, 4, 1, 12)).toBe(1)
   expect(fitTop([4, 30, 4], 0, 1, 12)).toBe(1)
+})
+
+test('cardOf reads the card off any of its lines and nothing off the search box', () => {
+  expect(cardOf('j12')).toBe(12)
+  expect(cardOf('d12.0')).toBe(12)
+  expect(cardOf('f7.1')).toBe(7)
+  expect(cardOf('find')).toBe(null)
+  expect(cardOf('find-back')).toBe(null)
+  expect(cardOf(undefined)).toBe(null)
 })

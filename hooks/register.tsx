@@ -178,6 +178,7 @@ function step($: EngineInterface): void {
         if (to !== findTop) {
           findTop = to
           $.ui.invalidate('ui.render')
+          keepRing($)
         }
       }
       if (ticksLeft > 0) {
@@ -375,6 +376,46 @@ let isSearching = false
 // frame late on every tick and flickered.
 let findTop = 0
 let findCount = 0
+// The keyboard's ring. Every line of a card is a Button, so the ring would
+// stop on each line; it is steered to stop once per card, on the title.
+let focusedKey: string | null = null
+/** The card the keys have chosen. Set as the key is pressed: the ring itself
+ *  lands a drawing later, and a second press must not start from the old card. */
+let selected: number | null = null
+/** The numbers of the cards shown, in the order drawn. */
+let shownOrder: number[] = []
+let isResetting = false
+let isPaneFocused = false
+
+/**
+ * The engine's ring keeps its place in the list, not its card: when the cards
+ * above it are scrolled away it ends up on a different one. After the cards
+ * move it is put back on the chosen card, or on the search box once that card
+ * is no longer drawn. Only while the pane holds the keyboard — asking for the
+ * ring otherwise would take the keyboard from the prompt.
+ */
+function keepRing($: EngineInterface): void {
+  if (!isPaneFocused || selected === null) {
+    return
+  }
+  const at = shownOrder.indexOf(selected)
+  const isDrawn = at >= findTop && at < findTop + 40
+  const key = isDrawn ? `j${selected}` : 'find'
+  if (!isDrawn) {
+    selected = null
+  }
+  $.clock.after(60, () => {
+    void $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+  })
+}
+
+/** The card a line's key belongs to: `j12`, `d12.0` and `f12.1` are card 12's. */
+export function cardOf(key: string | null | undefined): number | null {
+  const match = /^[jdf](\d+)(\.\d+)?$/.exec(key ?? '')
+
+  return match === null ? null : Number(match[1])
+}
+
 /** Rows each drawn card takes, and the rows the pane shows: what following needs. */
 let heights: number[] = []
 let paneRows = 40
@@ -1171,16 +1212,119 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // One stop per card. The ring's own order is every Button in the tree, so
+  // an arrow off a title lands on the line under it or on the last line of
+  // the card above; both are turned into the title of the card that was
+  // meant. Above the first card drawn there are cards that are not in the
+  // tree at all while the box scrolls them, and an arrow up went to the
+  // search box instead; they are drawn first and then given the ring.
+  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
+    const land = async (key: string | undefined) => {
+      const result = await next(key === undefined ? e : { ...e, element: key })
+      if (result.deny === undefined) {
+        focusedKey = key ?? null
+        selected = cardOf(focusedKey)
+      }
+
+      return result
+    }
+    if (e.origin.kind !== 'person') {
+      return land(e.element)
+    }
+    const goto = (n: number) => {
+      const at = shownOrder.indexOf(n)
+      const key = `j${n}`
+      if (isFinding && at !== -1) {
+        const was = findTop
+        const to = at < was ? at : fitTop(heights, was, at, paneRows - HEAD_ROWS)
+        if (to !== was) {
+          findTop = to
+          $.ui.invalidate('ui.render')
+          if (at < was || at >= was + 40) {
+            // Not in the tree yet: `$.ui.focus` waits for the drawing that brings it.
+            void $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+
+            return {}
+          }
+        }
+      }
+
+      return land(key)
+    }
+    const from = cardOf(focusedKey)
+    const to = cardOf(e.element)
+    if (to !== null) {
+      // The line under the title of the card the ring is on: an arrow down.
+      if (from === to && e.element !== `j${to}`) {
+        const below = shownOrder[shownOrder.indexOf(to) + 1]
+
+        return below === undefined ? {} : goto(below)
+      }
+
+      return goto(to)
+    }
+    if (isFinding && from !== null && (e.element === 'find' || e.element === 'find-back')) {
+      const at = shownOrder.indexOf(from)
+      const above = shownOrder[at - 1]
+      if (at === findTop && above !== undefined) {
+        return goto(above)
+      }
+    }
+
+    return land(e.element)
+  })
+
   on('ui.scroll', { requestId: PANE }, ($, e, next) => {
-    if (!isFinding) {
+    if (!isFinding || isResetting) {
       return next(e)
     }
-    // A tick is a row or a few; a card is about four.
+    // Not the person's: a move made to show the ring. The cards are placed
+    // for it already, and the window stays where it is.
+    if (e.origin.kind !== 'person') {
+      return {}
+    }
     const cards = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by) / 4))
+    // The wheel says where it was; the scroll keys do not. An arrow in a pane
+    // is a scroll key, so here it is what moves the ring from card to card,
+    // and Enter then jumps to the card it is on.
+    if (e.pointer === undefined) {
+      const at = selected === null ? -1 : shownOrder.indexOf(selected)
+      if (at === 0 && cards < 0) {
+        selected = null
+        void $.ui.focus({ requestId: PANE, key: 'find' }).catch(() => undefined)
+
+        return {}
+      }
+      const to = at === -1 ? findTop : Math.min(shownOrder.length - 1, Math.max(0, at + cards))
+      const n = shownOrder[to]
+      if (n !== undefined) {
+        selected = n
+        const top = to < findTop ? to : fitTop(heights, findTop, to, paneRows - HEAD_ROWS)
+        const ring = () => {
+          // The latest press wins: an earlier one's ring is not worth landing.
+          if (selected === n) {
+            void $.ui.focus({ requestId: PANE, key: `j${n}` }).catch(() => undefined)
+          }
+        }
+        if (top !== findTop) {
+          findTop = top
+          $.ui.invalidate('ui.render')
+          // After the redraw: given the ring where it sits now, below the
+          // window, the engine would move the window to show it and take the
+          // search box off the top.
+          $.clock.after(60, ring)
+        } else {
+          ring()
+        }
+      }
+
+      return {}
+    }
     const to = Math.min(Math.max(0, findCount - 1), Math.max(0, findTop + cards))
     if (to !== findTop) {
       findTop = to
       $.ui.invalidate('ui.render')
+      keepRing($)
     }
 
     return {}
@@ -1447,6 +1591,18 @@ export const register: Register = (on, options) => {
       ? matches.map(n => rows[n - 1]).filter((r): r is Row => r !== undefined)
       : rows
     findCount = shown.length
+    shownOrder = shown.map(r => r.n)
+    isPaneFocused = e.props.isFocused === true
+    // The window is meant to stay at the head while the box is up. If the
+    // engine moved it all the same (to show the ring), it is put back.
+    if (isFinding && (e.props.scroll?.offset ?? 0) !== 0 && !isResetting) {
+      isResetting = true
+      $.clock.after(0, () => {
+        void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined).then(() => {
+          isResetting = false
+        })
+      })
+    }
     paneRows = e.props.scroll?.bodyRows ?? paneRows
     // A card's rows: its border, the gap above it, its title and what is
     // drawn under that. The same lines the card draws below.
@@ -1528,7 +1684,11 @@ export const register: Register = (on, options) => {
             ? null
             : summary?.did || (summary !== undefined ? pendingOf(row, isRunning && row.n === rows.length, filling) : null)
           const jump = () => {
-            void $.ui.scroll({ to: { requestId: id! }, block: 'start' })
+            if (id !== undefined) {
+              void $.ui.scroll({ to: { requestId: id }, block: 'start' })
+            }
+            // A click lands the ring on the line clicked; it belongs on the title.
+            void $.ui.focus({ requestId: PANE, key: `j${row.n}` }).catch(() => undefined)
           }
           // One line of the card. Only a Button takes a press, and its hit area
           // is its label, so each line is a Button padded to the card's width:
@@ -1537,19 +1697,16 @@ export const register: Register = (on, options) => {
           // draws in the theme's `inactive` — the terminal's own foreground
           // vanished wherever the theme and the terminal disagreed. Under the
           // pointer the whole card comes up to the theme's text colour.
-          const line = (key: string, text: string, room = width) =>
-            id === undefined ? (
-              <Text key={key} color="inactive">{text}</Text>
-            ) : (
-              <Button
-                plain
-                dimColor
-                key={key}
-                label={pad(text, room)}
-                hover={{ color: 'text', dimColor: false, inverse: false }}
-                onPress={jump}
-              />
-            )
+          const line = (key: string, text: string, room = width) => (
+            <Button
+              plain
+              dimColor
+              key={key}
+              label={pad(text, room)}
+              hover={{ color: 'text', dimColor: false, inverse: false }}
+              onPress={jump}
+            />
+          )
 
           return (
             <Box
