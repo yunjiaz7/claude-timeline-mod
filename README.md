@@ -10,12 +10,13 @@ the morning.
 ## Use
 
 ```
-/timeline        # turns that did something
-/timeline 30     # the last 30 turns, including the quiet ones
+/timeline         # open the pane (docks right of the transcript)
+/timeline print   # same thing as a message
+/timeline close
 ```
 
-It prints as a normal message, so Remote Control and the desktop app see it too
-(panes do not cross that bridge).
+The pane is a terminal surface. Remote Control and the desktop app do not render
+plugin panes, so `print` is the form that reaches them.
 
 ```
 ❯  42  run the C2 ablation on the idle GPU

@@ -23,3 +23,16 @@ test('verbOf returns null for pure preamble', () => {
   expect(verbOf('cd /tmp')).toBe(null)
   expect(verbOf('export FOO=1')).toBe(null)
 })
+
+// Real `/timeline` output showed junk like `p'×2`, `print([x['name']` and `-s`:
+// multi-line commands with heredocs had their bodies tallied as commands.
+test('verbOf ignores a heredoc body', () => {
+  expect(verbOf("python3 - <<'EOF'\nprint([x['name'] for x in y])\nEOF")).toBe("python3")
+  expect(verbOf('cat > f.md <<MD\nsome text\nMD')).toBe('cat')
+})
+
+test('verbOf skips flags to reach the subcommand', () => {
+  expect(verbOf('git -c user.email=x commit -q -m msg')).toBe('git commit')
+  expect(verbOf('curl -s https://api.github.com/x')).toBe('curl')
+  expect(verbOf('gh repo create foo --private')).toBe('gh repo')
+})
