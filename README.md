@@ -28,7 +28,7 @@ plugin panes, so `print` is the form that reaches them.
        4 command(s): scp×2, cat×2
 ```
 
-Click a row to scroll the transcript to that turn. It aims at the message
+Each card ends in `⤴ jump`, which scrolls the transcript to that turn. It aims at the message
 itself where that row has been drawn, and otherwise at the turn's first tool
 row, whose requestId is its tool_use_id — read straight from the transcript,
 so turns from before the mod was installed jump too.
