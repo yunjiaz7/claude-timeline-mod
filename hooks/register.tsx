@@ -279,6 +279,7 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
     return ''
   }
   filling = true
+  const startedAt = await $.clock.now()
   try {
     const reply = await $.model.fork({ prompt: fillPrompt(missing) })
     if (!reply.isAnswered) {
@@ -306,16 +307,23 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
     }
     $.ui.invalidate('ui.render')
 
+    const seconds = ((await $.clock.now()) - startedAt) / 1000
     if (u === undefined) {
-      return `summarised ${written} of ${missing.length}`
+      return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s`
     }
 
     // `cache_read` under the fresh input means the prefix had lapsed and this
     // fork paid full price for the whole transcript.
     const lapsed = u.cache_read_input_tokens < u.input_tokens
 
-    return `summarised ${written} of ${missing.length} · ${k(u.cache_read_input_tokens)} cached`
-      + ` + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
+    // The prefix read dominates and does not shrink with the work: one new
+    // turn re-reads the same transcript as thirty do. That is the number to
+    // watch, so it is per-turn as well as total.
+    const perTurn = (u.cache_read_input_tokens + u.input_tokens) / missing.length
+
+    return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s`
+      + ` · ${k(u.cache_read_input_tokens)} cached + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
+      + ` · ${k(Math.round(perTurn))} in/turn`
       + (lapsed ? '  ← prefix had lapsed, paid full price' : '')
   } finally {
     filling = false
