@@ -1,6 +1,7 @@
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
+const LANGUAGES = ['English', '中文', '日本語', 'Español', 'Français', 'Deutsch'] as const
 
 // A message row's own render id, seen only while that row is drawn. Preferred
 // as a jump target because it lands on the ask; `anchor` (the turn's first tool
@@ -448,7 +449,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
-      description: 'What this session actually did — `fill` to summarise, `print` for text',
+      description: 'What this session did — `fill`, `print`, `lang <language>`, `close`',
     })
 
     return next(e)
@@ -456,6 +457,34 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'timeline' }, async ($, e) => {
     const arg = (e.args ?? '').trim()
+
+    // `/config` lists every mod's options in one place, which is where they
+    // belong; a mod with its own command should also answer for its own
+    // setting. Both write the same row, so there is one source of truth.
+    if (arg === 'lang' || arg.startsWith('lang ')) {
+      const want = arg.slice(4).trim()
+      if (want === '') {
+        return {
+          text: `timeline: summaries are in ${language}.`
+            + `\n  /timeline lang <${LANGUAGES.join(' | ')}>`,
+        }
+      }
+      const picked = LANGUAGES.find(l => l.toLowerCase() === want.toLowerCase())
+      if (picked === undefined) {
+        return { text: `timeline: no such language. One of: ${LANGUAGES.join(', ')}` }
+      }
+      if (picked === language) {
+        return { text: `timeline: already ${picked}.` }
+      }
+      const done = await $.config.set({ key: 'timeline.language', value: picked })
+      if ('deny' in done) {
+        return { text: `timeline: could not set it (${String(done.deny)})` }
+      }
+
+      // The change reloads the mod; the stored summaries no longer match the
+      // language and are dropped on that load, so the next draw rewrites them.
+      return { text: `timeline: summaries will be written in ${picked} — open the pane to rewrite them.` }
+    }
 
     if (arg === 'close') {
       await $.ui.close({ id: PANE })

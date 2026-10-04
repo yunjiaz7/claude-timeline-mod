@@ -101,8 +101,14 @@ it. A summary of a failure reads "addressed the issue" far too easily.
 
 ## Language
 
-Summaries are written in whatever `Summary language` is set to in `/config`
-(the `language` option: English, 中文, 日本語, Español, Français, Deutsch).
+```
+/timeline lang          # what it is now, and the choices
+/timeline lang 中文
+```
+
+or the `Summary language` row in `/config`, which is the same setting — a
+mod's options belong in the one menu that lists every mod's, and a mod with
+its own command should answer for its own setting too. Both write the row.
 They are written in that language whatever language the turn itself is in, so
 a session that mixes two reads as one.
 
