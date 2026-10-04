@@ -663,7 +663,13 @@ export const register: Register = (on, options) => {
 
     const rows = rowsCached(messages)
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
-    const unsummarised = rows.filter(r => summaries[r.key] === undefined).length
+    // What is left to write, counting a row that has only its ask: the trigger
+    // below and the footer both read this, and counting only rows with nothing
+    // at all meant a half-written row never asked for its other half.
+    const unsummarised = rows.filter(
+      r => summaries[r.key] === undefined
+        || (summaries[r.key]?.did === '' && r.body.trim() !== ''),
+    ).length
 
     // Drawing the pane is the signal that someone is reading it, and the only
     // one that holds across a reload, a reopen and a new turn alike. The fill
