@@ -903,33 +903,6 @@ async function runFill(
 
 let sessionKey: string | null = null
 
-// The pane sits on a grey of the theme's, so the marked card takes the
-// terminal's own ground — white on a light theme, black on a dark one — and
-// reads as lifted off the pane. Any other theme keeps the theme's own key.
-let tint = 'userMessageBackground'
-let isTinted = false
-
-// `auto` does not say which way it resolved. The terminal's COLORFGBG does
-// ("fg;bg", the engine's own fallback rule); without it the theme's key stays.
-export function tintOf(theme: string, colorfgbg: string | undefined): string {
-  let mode = theme
-  if (theme === 'auto') {
-    const bg = Number(colorfgbg?.split(';').at(-1) || NaN)
-    mode = !Number.isInteger(bg) || bg < 0 || bg > 15 ? '' : bg <= 6 || bg === 8 ? 'dark' : 'light'
-  }
-  if (mode.includes('ansi')) return 'userMessageBackground'
-  if (mode.startsWith('light')) return 'rgb(255,255,255)'
-  if (mode.startsWith('dark')) return 'rgb(0,0,0)'
-  return 'userMessageBackground'
-}
-
-async function loadTint($: EngineInterface): Promise<void> {
-  if (isTinted) return
-  isTinted = true
-  const theme = String((await $.config.list()).find(row => row.key === 'theme')?.value ?? '')
-  tint = tintOf(theme, await $.env.get('COLORFGBG'))
-}
-
 async function loadStore($: EngineInterface, language: string): Promise<string> {
   // Asked once: the pane is drawn often and the session does not change.
   sessionKey ??= `timeline:${await $.session.id()}`
@@ -983,20 +956,8 @@ export const register: Register = (on, options) => {
   // Without this the pane sits on whatever the last draw found.
   // A prompt lands at turn.start, and the pane was only redrawn at
   // turn.complete — so a new row sat showing its raw text for the whole turn.
-  // /theme is a slash command and starts no turn, so the tint is re-read as
-  // the row changes rather than at the next prompt.
-  on('config.set', { key: 'theme' }, async ($, e, next) => {
-    const result = await next(e)
-    isTinted = false
-    $.ui.invalidate('ui.render')
-
-    return result
-  })
-
   on('turn.start', ($, e, next) => {
     cache = null
-    // The theme may have changed since the last turn; read it again.
-    isTinted = false
     saveIds($)
     $.ui.invalidate('ui.render')
 
@@ -1187,7 +1148,6 @@ export const register: Register = (on, options) => {
     // summaries, and a draw can be the first thing to run after one — so the
     // drawing loads them itself rather than trusting a command to have run.
     const storeKey = await loadStore($, language)
-    await loadTint($)
     // The transcript is fetched only when a turn or a fill has changed it. A
     // redraw because the marker moved reuses the rows it already has, so
     // scrolling does not pull the whole session across on every step.
@@ -1267,10 +1227,12 @@ export const register: Register = (on, options) => {
               borderStyle="round"
               borderColor={row.n === nowAt ? 'claude' : 'promptBorder'}
               borderDimColor={row.n !== nowAt}
-              // The one card you are at takes the fill the transcript gives
-              // your own prompts — a theme key, so it follows the theme. Only
-              // that card: a fill on every card marks nothing.
-              backgroundColor={row.n === nowAt ? tint : undefined}
+              // The pane sits on a grey of the theme's; the one card you are at
+              // takes the theme's inverse-text colour — white on a light theme,
+              // black on a dark one — so it reads as lifted off the pane. A
+              // theme key, not a colour picked by theme name: under `auto` only
+              // the engine knows which way the theme resolved.
+              backgroundColor={row.n === nowAt ? 'inverseText' : undefined}
             >
               <Box flexDirection="row">
                 {/* A raw prompt can measure wider than `cells` counted it; held

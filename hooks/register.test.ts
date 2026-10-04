@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, chunksOf, costText, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
+import { cells, chunksOf, costText, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -134,15 +134,6 @@ test('resolveLanguage takes a name, a code, or a prefix', () => {
   expect(resolveLanguage('中文')).toBe('中文')
   expect(resolveLanguage('esp')).toBe('Español')
   expect(resolveLanguage('klingon')).toBe(null)
-})
-
-test('tintOf follows the theme, and the terminal background under auto', () => {
-  expect(tintOf('light', undefined)).toBe('rgb(255,255,255)')
-  expect(tintOf('dark', '0;15')).toBe('rgb(0,0,0)')
-  expect(tintOf('auto', '0;15')).toBe('rgb(255,255,255)')
-  expect(tintOf('auto', '15;0')).toBe('rgb(0,0,0)')
-  expect(tintOf('auto', undefined)).toBe('userMessageBackground')
-  expect(tintOf('light-ansi', undefined)).toBe('userMessageBackground')
 })
 
 test('pendingOf waits only on the newest row and summarises only a row with a reply', () => {
