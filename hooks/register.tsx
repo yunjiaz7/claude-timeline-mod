@@ -2,15 +2,6 @@ import type { Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
 
-// A transcript row's own render id, which `$.ui.scroll` needs to reach it.
-// Keyed by the text, since that is all a SessionMessage and a UserMessage row
-// share. Rows restored from history are not drawn, so they get no id and no
-// jump button — better than offering one that always fails.
-const rowIds = new Map<string, string>()
-
-function keyOf(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().slice(0, 60)
-}
 
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
 
@@ -74,7 +65,14 @@ function tally(items: string[], top: number): string {
     .join(', ')
 }
 
-type Row = { n: number; ask: string; isInjected: boolean; details: string[] }
+type Row = {
+  n: number
+  ask: string
+  isInjected: boolean
+  details: string[]
+  /** The first tool row of this turn, whose requestId is its tool_use_id. */
+  anchor?: string
+}
 
 /** One row per message you sent, holding what the turns after it actually did. */
 export function rowsOf(messages: readonly SessionMessage[]): Row[] {
@@ -91,6 +89,7 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
     const other: string[] = []
     const errors: string[] = []
 
+    row.anchor = uses[0]?.tool_use_id
     for (const use of uses) {
       if (use.isError === true) {
         errors.push(use.text ?? 'failed')
@@ -182,15 +181,6 @@ export const register: Register = on => {
     return { text: `timeline · ${rows.length} turns\n\n${body}` }
   })
 
-  on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
-    const key = keyOf(e.props.text)
-    if (key !== '') {
-      rowIds.set(key, e.requestId)
-    }
-
-    return next(e)
-  })
-
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const messages = await $.session.messages()
@@ -206,7 +196,7 @@ export const register: Register = on => {
         <Text dimColor>{rows.length} turns that did something</Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
-          const id = rowIds.get(keyOf(row.ask))
+          const id = row.anchor
           const label = `${row.isInjected ? '⏱' : '❯'} ${row.n}  ${head(row.ask, width)}`
 
           return (

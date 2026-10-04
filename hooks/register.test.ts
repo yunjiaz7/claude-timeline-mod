@@ -37,6 +37,10 @@ test('verbOf skips flags to reach the subcommand', () => {
   expect(verbOf('gh repo create foo --private')).toBe('gh repo')
 })
 
+let nextId = 0
+const use = (tool: string, input: Record<string, unknown>) =>
+  ({ tool, input, tool_use_id: `toolu_${(nextId += 1)}` })
+
 const msg = (role: 'user' | 'assistant', text: string, toolUses: unknown[] = []) =>
   ({ role, text, toolUses }) as never
 
@@ -44,10 +48,10 @@ test('rowsOf opens a row per sent message and attributes the work after it', () 
   const rows = rowsOf([
     msg('user', 'run the ablation'),
     msg('assistant', 'ok', [
-      { tool: 'Bash', input: { command: 'cd /x && python train.py' } },
-      { tool: 'Write', input: { file_path: '/x/results.json' } },
+      use('Bash', { command: 'cd /x && python train.py' }),
+      use('Write', { file_path: '/x/results.json' }),
     ]),
-    msg('assistant', 'done', [{ tool: 'Bash', input: { command: 'cat /x/results.json' } }]),
+    msg('assistant', 'done', [use('Bash', { command: 'cat /x/results.json' })]),
     msg('user', '<task-notification> finished'),
   ])
 
@@ -60,4 +64,18 @@ test('rowsOf opens a row per sent message and attributes the work after it', () 
   // An injected turn still opens a row, and reads differently.
   expect(rows[1].isInjected).toBe(true)
   expect(rows[1].details).toEqual([])
+})
+
+// The jump target is the turn's first tool row: its tool_use_id IS the row's
+// requestId, so it comes straight from the transcript and covers history too.
+test('rowsOf anchors a row to its first tool call', () => {
+  nextId = 0
+  const rows = rowsOf([
+    msg('user', 'go'),
+    msg('assistant', 'ok', [use('Bash', { command: 'ls' }), use('Bash', { command: 'pwd' })]),
+    msg('user', 'just chatting'),
+  ])
+
+  expect(rows[0].anchor).toBe('toolu_1')
+  expect(rows[1].anchor).toBe(undefined)
 })
