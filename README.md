@@ -1,46 +1,58 @@
 # timeline
 
-一个 Claude Code mod：把 session 读成**时间线** —— 每段你发的话之后，*实际发生了什么变化*。
+A Claude Code mod that reads a session as **what actually happened** — for each
+turn, the files touched, the commands run, the errors hit.
 
-不是对话目录（谁说了什么），是工作日志（动了什么）。为无人值守的长跑设计：
-auto research 跑一夜，早上扫一眼就知道发生了什么。
+Not a table of contents (who said what). A work log (what changed). Built for
+unattended long runs: let an auto-research loop go overnight, read one screen in
+the morning.
 
-## 用
-
-```
-/timeline
-```
-
-打印成一条对话消息，所以 Remote Control / 桌面端也看得见（面板不行）。
+## Use
 
 ```
-❯ 10-03 14:22  帮我跑一下 C2 那组实验
-    跑了 26 条命令: ssh×22, python3 train.py×3, cat×1
-    其他: Monitor, CronCreate
-    ⚠ Exit code 1  CUDA out of memory
+/timeline        # turns that did something
+/timeline 30     # the last 30 turns, including the quiet ones
 ```
 
-`❯` 是你亲手发的，`⏱` 是定时任务 / 后台注入的。
+It prints as a normal message, so Remote Control and the desktop app see it too
+(panes do not cross that bridge).
 
-## 历史 session
+```
+❯  42  run the C2 ablation on the idle GPU
+       26 command(s): ssh×22, python3 train.py×3, cat×1
+       Monitor, CronCreate
+       ⚠ Exit code 1  CUDA out of memory
 
-mod 只看它加载之后的事。要读以前的：
+⏱  43  <task-notification> run finished
+       4 command(s): scp×2, cat×2
+```
+
+`❯` is a turn you typed. `⏱` is one injected — a background task reporting, a
+scheduled trigger, a slash command.
+
+It reads the session transcript on demand, so it covers turns from before the
+mod was installed. Nothing is accumulated, nothing is stored.
+
+## Past sessions
+
+For a session that is no longer open:
 
 ```bash
-python3 scripts/timeline_past.py ~/.claude/projects/<项目>/<session>.jsonl \
+python3 scripts/timeline_past.py ~/.claude/projects/<project>/<session>.jsonl \
   --since=2026-09-05 --min-tools=4
 ```
 
-## 开发
+## Develop
 
 ```bash
 claude plugin validate .
 claude plugin test .
 ```
 
-热重载开着的话，改完文件下一轮就生效。
+With hot reloading on, an edit lands on the next turn.
 
-## 状态
+## Status
 
-v0。刻意没做：LLM 生成每段标题、面板、多 session 聚合、落盘。
-等「内容形态对不对」验证完再加 —— 先用，再迭代。
+v0. Deliberately absent: model-written titles per segment, a live pane,
+cross-session rollup, writing to disk. Each waits until using it proves the
+shape is right.

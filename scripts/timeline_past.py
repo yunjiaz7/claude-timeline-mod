@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""把一个 Claude Code session 读成工作日志。
+"""Read a Claude Code session as a work log.
 
-节点 = 你发的每一条消息；每段列出那之后实际发生的变化。
-v0 不调模型：只用 jsonl 里确定性的信号。
+One segment per message you sent; each lists what actually changed after it.
+No model calls: only the deterministic signals already in the jsonl.
 
-用法: worklog.py <session.jsonl> [--since 2026-08-24] [--min-tools 1]
+Usage: worklog.py <session.jsonl> [--since 2026-08-24] [--min-tools 1]
 """
 import json
 import re
@@ -37,7 +37,7 @@ def head(s, n=70):
     return s[:n] + ("…" if len(s) > n else "")
 
 
-# 真正干活的那个词：跳过 cd/export/source 这些铺垫，以及 timeout/nohup 这些前缀。
+# The word that did the work: skip cd/export preamble and timeout/nohup wrappers.
 NOISE = {"cd", "export", "source", "set", "unset", "echo"}
 PREFIX = {"timeout", "nohup", "sudo", "env", "time", "nice", "xargs", "command"}
 
@@ -49,7 +49,7 @@ def verb_of(cmd):
             words.pop(0)
         if words and words[0] not in NOISE:
             v = words[0].split("/")[-1]
-            # `python train.py` 比单独一个 `python` 有用得多
+            # `python train.py` says far more than a bare `python`
             if v in {"python", "python3", "uv", "npm", "npx", "git", "bash", "sh"} and len(words) > 1:
                 return f"{v} {words[1].split('/')[-1]}"
             return v
@@ -57,7 +57,7 @@ def verb_of(cmd):
 
 
 def segments(path):
-    """切成 [(发起消息, [这段里的事件])]。"""
+    """Split into [(opening message, [events in that segment])]."""
     seg = None
     for line in open(path):
         try:
@@ -72,7 +72,7 @@ def segments(path):
                     yield seg
                 seg = (d, [])
                 continue
-            # 工具结果：找出报错的
+            # tool results: pick out the failures
             for b in blocks(d, "tool_result"):
                 if seg and b.get("is_error"):
                     seg[1].append(("error", head(str(b.get("content")), 90)))
@@ -102,20 +102,20 @@ def render(prompt, events):
 
     out = [f"### {prompt['timestamp'][:16].replace('T', ' ')}  {head(text_of(prompt))}"]
     if files:
-        out.append(f"  改动 {len(files)} 个文件: " + ", ".join(f.split("/")[-1] for f in files[:6])
+        out.append(f"  {len(files)} file(s): " + ", ".join(f.split("/")[-1] for f in files[:6])
                    + (" …" if len(files) > 6 else ""))
     if cmds:
         verbs = Counter(filter(None, (verb_of(c) for c in cmds)))
-        out.append(f"  跑了 {len(cmds)} 条命令: " + ", ".join(f"{v}×{n}" for v, n in verbs.most_common(5)))
+        out.append(f"  {len(cmds)} command(s): " + ", ".join(f"{v}×{n}" for v, n in verbs.most_common(5)))
     busy = [f"{k}×{v}" for k, v in kinds.most_common() if k not in WRITES and k != "Bash"]
     if busy:
-        out.append("  其他: " + ", ".join(busy[:6]))
+        out.append("  " + ", ".join(busy[:6]))
     for e in errs[:3]:
         out.append(f"  ⚠ {e}")
     if len(errs) > 3:
-        out.append(f"  ⚠ …另有 {len(errs) - 3} 个报错")
+        out.append(f"  ⚠ …and {len(errs) - 3} more error(s)")
     if len(out) == 1:
-        out.append("  (只是对话，没动任何东西)")
+        out.append("  (talk only, nothing changed)")
     return "\n".join(out)
 
 
@@ -136,7 +136,7 @@ def main():
         print(render(prompt, events))
         print()
         n += 1
-    print(f"— {n} 段 —", file=sys.stderr)
+    print(f"— {n} segments —", file=sys.stderr)
 
 
 if __name__ == "__main__":
