@@ -751,11 +751,6 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" paddingRight={1}>
-        <Text dimColor>
-          {rows.length} turns
-          {unsummarised > 0 ? ` · ${unsummarised} to summarise` : ''}
-          {spent.calls > 0 ? ` · summaries: ${spentLine()}` : ''}
-        </Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
@@ -814,6 +809,14 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
+        {/* The count and the spend sit under the rows: the newest turn is at
+            the foot of the list, so that is where the eye already is. */}
+        <Text dimColor>
+          {'\n'}
+          {rows.length} turns
+          {unsummarised > 0 ? ` · ${unsummarised} to summarise` : ''}
+          {spent.calls > 0 ? ` · ${spentLine()}` : ''}
+        </Text>
       </Box>
     )
   })
