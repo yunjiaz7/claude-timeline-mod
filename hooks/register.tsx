@@ -407,12 +407,13 @@ async function runFill(
   } else if (size === triedAt) {
     return ''
   }
-  // A row with no `did` yet is still open: an ask-only summary is written for
-  // a turn whose reply is not available, and upgraded once it is.
-  const open = (r: Row) =>
-    !failed.has(r.key) && (summaries[r.key] === undefined || summaries[r.key]?.did === '')
-  const full = rows.filter(r => open(r) && r.body.trim() !== '')
-  const asksOnly = rows.filter(r => open(r) && r.body.trim() === '' && summaries[r.key] === undefined)
+  // A prompt is there at once and a reply is not, so the ask is always written
+  // first and the reply side upgrades it later. Waiting for the reply to write
+  // either is what left a new row showing its raw prompt for a whole turn.
+  const asksOnly = rows.filter(r => !failed.has(r.key) && summaries[r.key] === undefined)
+  const full = rows.filter(
+    r => !failed.has(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '',
+  )
   if ((full.length === 0 && asksOnly.length === 0) || filling) {
     return ''
   }
@@ -424,6 +425,32 @@ async function runFill(
     let written = 0
     let fellBack: Row[] = []
     const usages: ({ input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined)[] = []
+
+    // The asks go first and the pane is redrawn the moment they land: they are
+    // short, they need no reply, and they are what turns a raw prompt into a
+    // line you can read while the turn is still running.
+    if (asksOnly.length > 0) {
+      const reply = await $.model.complete({
+        model: 'haiku',
+        effort: 'low',
+        maxTokens: Math.min(4000, 40 + asksOnly.length * 30),
+        prompt: asksPrompt(asksOnly, language),
+      })
+      if (reply.isAnswered) {
+        usages.push(reply.usage)
+        const parsed = parseAsks(reply.text)
+        for (const row of asksOnly) {
+          const got = parsed[row.n]
+          if (got !== undefined) {
+            summaries[row.key] = { ask: got, did: '' }
+            written += 1
+          }
+        }
+        await $.store.set(storeKey, summaries)
+        cache = null
+        $.ui.invalidate('ui.render')
+      }
+    }
 
     // One missing turn is given to `complete`, which carries no history: it
     // reads that turn alone. A fork would re-read the whole transcript to
@@ -485,7 +512,7 @@ async function runFill(
       }
     }
 
-    const asks = [...asksOnly, ...fellBack]
+    const asks = fellBack
     if (asks.length > 0) {
       const reply = await $.model.complete({
         model: 'haiku',
@@ -531,7 +558,7 @@ async function runFill(
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
     const asked = full.length + asksOnly.length
-    const partial = asks.length > 0 ? `, ${asks.length} ask-only` : ''
+    const partial = asksOnly.length > 0 ? `, ${asksOnly.length} ask-only` : ''
 
     return `summarised ${written} of ${asked} in ${seconds.toFixed(1)}s${partial}`
       + ` · ${k(used)} in, ${k(out)} out`
@@ -571,6 +598,15 @@ export const register: Register = (on, options) => {
 
   // A pane is drawn when the engine asks, and new messages are not an ask.
   // Without this the pane sits on whatever the last draw found.
+  // A prompt lands at turn.start, and the pane was only redrawn at
+  // turn.complete — so a new row sat showing its raw text for the whole turn.
+  on('turn.start', ($, e, next) => {
+    cache = null
+    $.ui.invalidate('ui.render')
+
+    return next(e)
+  })
+
   on('turn.complete', ($, e, next) => {
     cache = null
     $.ui.invalidate('ui.render')

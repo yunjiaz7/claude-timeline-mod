@@ -67,7 +67,10 @@ slower half:
 | Ask summarised | what you wanted, and `→ summarising…` while a call runs, `→ waiting…` until one does |
 | Reply summarised | what you wanted, and what it did |
 
-Each step carries more than the last and none of them blocks.
+Each step carries more than the last and none of them blocks. The ask is
+always written first, in its own short call, and the pane is redrawn the
+moment it lands — a row never sits showing its raw prompt while the turn it
+opened is still running.
 
 ## Summaries
 
