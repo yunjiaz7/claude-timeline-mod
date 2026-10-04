@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
@@ -35,17 +36,51 @@ export function resolveLanguage(want: string): string | null {
 const askIds = new Map<string, string>()
 
 /**
- * Which messages the transcript is showing, by the same text key, and the row
- * the pane therefore marks. The engine reports `onScreen` only for the messages
- * at the viewport's edges and only when it changes, so this costs no polling
- * and no timer — and the pane is redrawn only when the marked row itself
- * changes, not on every scroll report.
+ * Which turn the transcript is showing. Every kind of row reports `onScreen` —
+ * the ask, each block of the reply, each tool call — so each is mapped to its
+ * turn and the earliest turn with a row in the viewport is the one marked.
+ * Tracking the ask alone marked nothing for most of a session: under a long
+ * reply no ask is on screen at all.
+ *
+ * The engine reports only at the viewport's edges and only on a change, so
+ * this takes no timer and no polling. The marked turn lives in `$.state`, which
+ * redraws the pane alone when it changes, rather than every row of the
+ * transcript.
  */
-const onScreen = new Set<string>()
-let marked: string | null = null
-/** Row keys in transcript order, so the topmost visible one can be picked. */
-let lastSeen: string[] = []
-let probes = 0
+const markedAtom = atom({ plugin: 'timeline', key: 'marked' } as const, null)
+/** Rows in the viewport, by their own render id, and the turn each belongs to. */
+const visible = new Map<string, number>()
+let markedN: number | null = null
+let turnOfTool = new Map<string, number>()
+let turnOfText = new Map<string, number>()
+/** A viewport cannot span this many turns; anything further is a missed report. */
+const SPAN = 20
+
+function track($: EngineInterface, id: string, os: unknown, n: number | undefined): void {
+  if (n === undefined || os === undefined) {
+    return
+  }
+  if (os === null) {
+    visible.delete(id)
+  } else {
+    visible.set(id, n)
+    for (const [k, v] of visible) {
+      if (Math.abs(v - n) > SPAN) {
+        visible.delete(k)
+      }
+    }
+  }
+  if (visible.size === 0) {
+    return
+  }
+  const top = Math.min(...visible.values())
+  if (top !== markedN) {
+    markedN = top
+    void update($, markedAtom, () => top)
+    // Keep the marked card inside the pane's own window as well.
+    void $.ui.scroll({ to: { key: `t${top}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
+  }
+}
 
 function keyOf(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 60)
@@ -208,6 +243,9 @@ type Row = {
   anchor?: string
   /** Stable key for the stored summary; turns are append-only, so `n` holds. */
   key: string
+  /** Every tool call of the turn, and the opening of each reply block. */
+  toolIds: string[]
+  replyKeys: string[]
   /** This turn alone, trimmed — what `complete` is given when only one is missing. */
   body: string
 }
@@ -269,10 +307,18 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
         facts: [],
         errors: [],
         body: '',
+        toolIds: [],
+        replyKeys: [],
       })
     } else if (m.role === 'assistant') {
       uses = [...uses, ...m.toolUses]
       const row = rows[rows.length - 1]
+      if (row !== undefined) {
+        row.toolIds.push(...m.toolUses.map(u => u.tool_use_id))
+        if (m.text.trim() !== '') {
+          row.replyKeys.push(keyOf(m.text))
+        }
+      }
       if (row !== undefined && row.body.length < 6000) {
         // Enough of the turn to summarise it and no more: the reply, then each
         // call by name with a short look at what it ran and whether it failed.
@@ -297,6 +343,17 @@ function rowsCached(messages: readonly SessionMessage[]): Row[] {
     // in its numbering is not a trajectory, and a turn that decided something
     // without touching a file is often the one that mattered.
     cache = { size: messages.length, rows: rowsOf(messages) }
+    turnOfTool = new Map()
+    turnOfText = new Map()
+    for (const row of cache.rows) {
+      turnOfText.set(keyOf(row.ask), row.n)
+      for (const id of row.toolIds) {
+        turnOfTool.set(id, row.n)
+      }
+      for (const k of row.replyKeys) {
+        turnOfText.set(k, row.n)
+      }
+    }
   }
 
   return cache.rows
@@ -669,29 +726,26 @@ export const register: Register = (on, options) => {
     }
     askIds.set(key, e.requestId)
 
-    // TEMPORARY: say once what the surface actually reports, and whether the
-    // key matches a row. Removed as soon as it has answered.
-    if (probes < 3) {
-      probes += 1
-      const shape = e.props.onScreen === undefined ? 'absent'
-        : e.props.onScreen === null ? 'null (off-screen)'
-        : `rows ${e.props.onScreen.first}-${e.props.onScreen.last} of ${e.props.onScreen.of}`
-      $.ui.log(`timeline/probe: onScreen=${shape} · key="${key.slice(0, 28)}" · matchesARow=${lastSeen.includes(key)} · rowsKnown=${lastSeen.length}`)
-    }
+    track($, e.requestId, e.props.onScreen, turnOfText.get(key))
 
-    // `onScreen` is null while the row is drawn outside the viewport, and
-    // absent on a surface that does not say — then nothing is marked, which is
-    // a fine thing for it to do.
-    const was = marked
-    if (e.props.onScreen === null) {
-      onScreen.delete(key)
-    } else if (e.props.onScreen !== undefined) {
-      onScreen.add(key)
-    }
-    marked = onScreen.size === 0 ? null : (lastSeen.find(k => onScreen.has(k)) ?? null)
-    if (marked !== was) {
-      $.ui.invalidate('ui.render')
-    }
+    return next(e)
+  })
+
+  on('ui.render', { component: 'AssistantMessage' }, ($, e, next) => {
+    track($, e.requestId, e.props.onScreen, turnOfText.get(keyOf(e.props.text)))
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'ToolUse' }, ($, e, next) => {
+    track($, e.requestId, e.props.onScreen, turnOfTool.get(e.props.tool_use_id))
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
+    const id = e.props.calls.find(c => c.tool_use_id !== undefined)?.tool_use_id
+    track($, e.requestId, e.props.onScreen, id === undefined ? undefined : turnOfTool.get(id))
 
     return next(e)
   })
@@ -837,7 +891,7 @@ export const register: Register = (on, options) => {
     }
 
     const rows = rowsCached(messages)
-    lastSeen = rows.map(r => keyOf(r.ask))
+    const nowAt = await read($, markedAtom)
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
     // What is left to write, counting a row that has only its ask: the trigger
     // below and the footer both read this, and counting only rows with nothing
@@ -881,8 +935,8 @@ export const register: Register = (on, options) => {
               marginTop={1}
               paddingX={1}
               borderStyle="round"
-              borderColor={keyOf(row.ask) === marked ? 'claude' : 'promptBorder'}
-              borderDimColor={keyOf(row.ask) !== marked}
+              borderColor={row.n === nowAt ? 'claude' : 'promptBorder'}
+              borderDimColor={row.n !== nowAt}
             >
               <Box flexDirection="row">
                 <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>

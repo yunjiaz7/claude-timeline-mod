@@ -158,12 +158,16 @@ are dropped and the next fill rewrites them — one call, not one per turn.
 
 ## Following the transcript
 
-The row the transcript is showing is marked. The engine reports `onScreen` for
-the messages at the viewport's edges and only when it changes, so this needs no
-timer and no polling, and the pane is redrawn only when the marked row itself
-changes — a fast scroll past thirty rows costs the redraws of the rows it
-settles on, not one per scroll event. On a surface that does not report it,
-nothing is marked.
+The turn the transcript is showing is marked, and the pane scrolls to keep that
+card in view. Every kind of row reports `onScreen` — the ask, each block of the
+reply, each tool call — so each is mapped to its turn and the earliest turn
+with a row in the viewport is the one marked. Tracking the ask alone marks
+nothing for most of a session: under a long reply no ask is on screen at all.
+
+The engine reports only at the viewport's edges and only on a change, so this
+takes no timer and no polling. The marked turn lives in `$.state`, which
+redraws the pane alone when it changes. On a surface that does not report
+`onScreen`, nothing is marked.
 
 ## Rows are derived
 
