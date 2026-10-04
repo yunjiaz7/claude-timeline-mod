@@ -1161,7 +1161,7 @@ export const register: Register = (on, options) => {
     if (cache === null) {
       const messages = await $.session.messages()
       if ('deny' in messages) {
-        return <Text dimColor>cannot read this session</Text>
+        return <Text color="text" dimColor>cannot read this session</Text>
       }
       rows = rowsCached(messages)
       size = messages.length
@@ -1202,7 +1202,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" paddingRight={1}>
-        {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
+        {rows.length === 0 && <Text color="text" dimColor>Nothing yet.</Text>}
         {rows.map(row => {
           // Its own prompt, else its first tool call, else the last tool call
           // before it — the nearest row above that the transcript can find.
@@ -1243,7 +1243,7 @@ export const register: Register = (on, options) => {
                 {/* A raw prompt can measure wider than `cells` counted it; held
                     at its own width, the number is not what gives way. */}
                 <Box flexShrink={0}>
-                  <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
+                  <Text color={row.isInjected ? 'text' : 'claude'} dimColor={row.isInjected} bold>
                     {mark}
                     {'  '}
                   </Text>
@@ -1256,6 +1256,11 @@ export const register: Register = (on, options) => {
                     key={`j${row.n}`}
                     label={askText}
                     dimColor={row.isInjected}
+                    // A Button's label takes the terminal's foreground and no
+                    // colour of its own at rest; under the pointer it can take
+                    // the theme's, which is what keeps it readable when the
+                    // theme and the terminal disagree.
+                    hover={{ color: 'text' }}
                     onPress={() => {
                       void $.ui.scroll({ to: { requestId: id }, block: 'start' })
                     }}
