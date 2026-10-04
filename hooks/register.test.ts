@@ -66,7 +66,7 @@ test('rowsOf opens a row per sent message and attributes the work after it', () 
   expect(rows[1]!.facts).toEqual([])
   // Every turn gets a row now, talk-only ones included: a trajectory with
   // holes in its numbering is not a trajectory.
-  expect(rows.map(r => r.key)).toEqual(['t1', 't2'])
+  expect(rows.map(r => r.n)).toEqual([1, 2])
 })
 
 // The jump target is the turn's first tool row: its tool_use_id IS the row's
@@ -174,4 +174,15 @@ test('wrapCells breaks at a space when it can and mid-word when it cannot', () =
 test('a stray closing pipe is not part of the summary', () => {
   expect(parseFill('3|ask|did it|')[3]).toEqual({ ask: 'ask', did: 'did it' })
   expect(parseAsks('4|wanted this |')[4]).toBe('wanted this')
+})
+
+// After a compaction and a resume the session hands over only its tail. Keys
+// made of the position then put an old turn's summary on a different turn.
+test('a row keeps its key when the turns before it are gone', () => {
+  const all = [msg('user', 'first ask'), msg('user', 'second ask'), msg('user', 'continue'), msg('user', 'continue')]
+  const full = rowsOf(all)
+  const tail = rowsOf(all.slice(1))
+  expect(tail[0]!.n).toBe(1)
+  expect(tail[0]!.key).toBe(full[1]!.key)
+  expect(full[2]!.key).not.toBe(full[3]!.key)
 })

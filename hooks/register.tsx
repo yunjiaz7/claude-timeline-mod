@@ -458,6 +458,7 @@ type Row = {
 /** One row per message you sent, holding what the turns after it actually did. */
 export function rowsOf(messages: readonly SessionMessage[]): Row[] {
   const rows: Row[] = []
+  const seen = new Map<string, number>()
   let uses: SessionMessage['toolUses'] = []
 
   const close = () => {
@@ -504,9 +505,19 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
   for (const m of messages) {
     if (m.role === 'user' && m.text.trim() !== '') {
       close()
+      // A summary is stored under what the turn says, not where it sits. The
+      // list a session hands over can lose its head — after a compaction and
+      // a resume it starts at the summary — and a key made of the position
+      // then put turn 39's summary on whatever was 39th now.
+      // ponytail: identical asks are told apart by their order alone, so a
+      // shifted list can swap the reply lines of two "continue"s; key on the
+      // message's own id if the API ever exposes one.
+      const said = keyOf(m.text)
+      const nth = (seen.get(said) ?? 0) + 1
+      seen.set(said, nth)
       rows.push({
         n: rows.length + 1,
-        key: `t${rows.length + 1}`,
+        key: `${said}#${nth}`,
         ask: m.text,
         isInjected: INJECTED.test(m.text),
         facts: [],
@@ -961,7 +972,9 @@ async function loadStore($: EngineInterface, language: string): Promise<string> 
     const was = await $.store.get(`${storeKey}:language`)
     summaries = was === language
       ? (Object.fromEntries(
-          Object.entries(stored).filter(([, v]) => typeof v === 'object' && v !== null),
+          // `t12`: the keys of the position-keyed store, which cannot be
+          // matched to a turn any more. Dropped; a fill rewrites them.
+          Object.entries(stored).filter(([k, v]) => typeof v === 'object' && v !== null && !/^t\d+$/.test(k)),
         ) as Record<string, Summary>)
       : {}
     if (was !== language) {
