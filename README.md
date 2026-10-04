@@ -69,9 +69,19 @@ stored per session and never recomputed. `fill` reports what the call cost:
 fresh input means the prefix had lapsed and that fork paid full price for the
 transcript.
 
-It is never automatic. A fork is cheap only while the prefix is cached — after
-an hour idle, or a `/model` switch, the same call costs about ten times as
-much — so it runs when you ask and not before.
+It fills itself while the pane is open: once when you open it, catching up on
+whatever accumulated while it was closed, and then once per turn as you work.
+With the pane closed nothing is spent — a session can run all night unattended
+and cost nothing until you open the pane in the morning, which then summarises
+the whole night in one fork.
+
+That shape is deliberate. A fork re-reads the whole cached prefix whatever it
+covers, so one fork per turn is the expensive form and is only worth paying
+while somebody is reading the result. Measured on a 414k-token session: one
+fork over 35 turns read 414.3k cached + 1.8k fresh and wrote 4.9k — about
+$0.34 on Opus 5 rates, against roughly $7 for the same 35 turns one fork at a
+time. The pane header carries the running total so the spend is never silent,
+and `/timeline fill` still forces a fill by hand.
 
 What the model writes sits beside what the transcript recorded, never instead
 of it: the command tally stays, and an error is printed as the tool reported

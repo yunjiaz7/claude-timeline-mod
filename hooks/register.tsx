@@ -1,4 +1,4 @@
-import type { Register, SessionMessage } from 'claude-code'
+import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
 
@@ -18,6 +18,13 @@ type Summary = { ask: string; did: string }
 let summaries: Record<string, Summary> = {}
 let loaded = false
 
+// Auto-fill runs only while the pane is open, so nothing is spent on summaries
+// nobody is looking at. Turns arrive one per prompt, already spaced, so each is
+// filled as it lands — there is no burst to debounce.
+let filling = false
+/** What this session's fills have cost, shown so the spend is never silent. */
+const spent = { forks: 0, cached: 0, fresh: 0, out: 0 }
+
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
 
 // `cd x && python train.py` really ran `python train.py`, not `cd`.
@@ -29,10 +36,10 @@ const KEEP_ARG = new Set(['python', 'python3', 'uv', 'npm', 'npx', 'git', 'gh', 
 export function verbOf(cmd: string): string | null {
   // Only the first line, and nothing past a heredoc marker: a `python3 - <<EOF`
   // body is data, and tallying words out of it is noise, not signal.
-  const line = cmd.split('\n')[0].split('<<')[0]
+  const line = (cmd.split('\n')[0] ?? '').split('<<')[0] ?? ''
   for (const part of line.split(/&&|\|\||;/)) {
     const words = part.trim().split(/\s+/).filter(Boolean)
-    while (words.length > 0 && (PREFIX.has(words[0]) || words[0].includes('=') || /^\d+$/.test(words[0]))) {
+    while (words.length > 0 && (PREFIX.has(words[0]!) || words[0]!.includes('=') || /^\d+$/.test(words[0]!))) {
       words.shift()
     }
     const first = words[0]
@@ -232,19 +239,127 @@ export function parseFill(text: string): Record<number, { ask: string; did: stri
   for (const line of text.split('\n')) {
     const match = /^\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*$/.exec(line)
     if (match !== null) {
-      out[Number(match[1])] = { ask: match[2], did: match[3] }
+      out[Number(match[1])] = { ask: match[2]!, did: match[3]! }
     }
   }
 
   return out
 }
 
+const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+
+/** The same rows as text, for a surface that draws no pane. */
+function asText(rows: Row[], store: Record<string, Summary>): string {
+  return rows
+    .map(r => {
+      const summary = store[r.key]
+      const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
+      if (summary !== undefined) {
+        lines.push(`      → ${summary.did}`)
+      }
+      if (r.facts.length > 0) {
+        lines.push(`      ${r.facts.join(' · ')}`)
+      }
+      for (const err of r.errors.slice(0, 2)) {
+        lines.push(`      ⚠ ${head(err, 76)}`)
+      }
+
+      return lines.join('\n')
+    })
+    .join('\n\n')
+}
+
+/**
+ * Summarise every turn that has none, in one fork, and store the result.
+ * Resolves a line saying what it cost, or '' when there was nothing to do.
+ */
+async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promise<string> {
+  const missing = rows.filter(r => summaries[r.key] === undefined)
+  if (missing.length === 0 || filling) {
+    return ''
+  }
+  filling = true
+  try {
+    const reply = await $.model.fork({ prompt: fillPrompt(missing) })
+    if (!reply.isAnswered) {
+      return `could not summarise (${reply.reason})`
+    }
+
+    const parsed = parseFill(reply.text)
+    let written = 0
+    for (const row of missing) {
+      const got = parsed[row.n]
+      if (got !== undefined) {
+        summaries[row.key] = got
+        written += 1
+      }
+    }
+    await $.store.set(storeKey, summaries)
+    cache = null
+
+    const u = reply.usage
+    if (u !== undefined) {
+      spent.forks += 1
+      spent.cached += u.cache_read_input_tokens
+      spent.fresh += u.input_tokens
+      spent.out += u.output_tokens
+    }
+    $.ui.invalidate('ui.render')
+
+    if (u === undefined) {
+      return `summarised ${written} of ${missing.length}`
+    }
+
+    // `cache_read` under the fresh input means the prefix had lapsed and this
+    // fork paid full price for the whole transcript.
+    const lapsed = u.cache_read_input_tokens < u.input_tokens
+
+    return `summarised ${written} of ${missing.length} · ${k(u.cache_read_input_tokens)} cached`
+      + ` + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
+      + (lapsed ? '  ← prefix had lapsed, paid full price' : '')
+  } finally {
+    filling = false
+  }
+}
+
+async function isPaneOpen($: EngineInterface): Promise<boolean> {
+  return (await $.ui.panes()).some(pane => pane.id === PANE)
+}
+
+async function loadStore($: EngineInterface): Promise<string> {
+  const storeKey = `timeline:${await $.session.id()}`
+  if (!loaded) {
+    const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
+    // v0 stored one string per turn. Those lack the ask side, so drop them and
+    // let a fill write both — a refill is one call, not one per turn.
+    summaries = Object.fromEntries(
+      Object.entries(stored).filter(([, v]) => typeof v === 'object' && v !== null),
+    ) as Record<string, Summary>
+    loaded = true
+  }
+
+  return storeKey
+}
+
 export const register: Register = on => {
   // A pane is drawn when the engine asks, and new messages are not an ask.
   // Without this the pane sits on whatever the last draw found.
-  on('turn.complete', ($, e, next) => {
+  on('turn.complete', async ($, e, next) => {
     cache = null
     $.ui.invalidate('ui.render')
+
+    // Summarise as you work, but only while the pane is open: a fork re-reads
+    // the whole cached prefix, so one per turn is the costly shape and is only
+    // worth it when someone is actually reading the result.
+    if (await isPaneOpen($)) {
+      const messages = await $.session.messages()
+      if (!('deny' in messages)) {
+        const line = await runFill($, rowsCached(messages), await loadStore($))
+        if (line !== '') {
+          $.ui.log(`timeline: ${line}`, { to: 'debug' })
+        }
+      }
+    }
 
     return next(e)
   })
@@ -281,17 +396,7 @@ export const register: Register = on => {
       return { text: `timeline: cannot read this session (${messages.deny})` }
     }
     const rows = rowsCached(messages)
-    const storeKey = `timeline:${await $.session.id()}`
-
-    if (!loaded) {
-      const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
-      // v0 stored one string per turn. Those lack the ask side, so drop them
-      // and let `fill` write both — a refill is one call, not one per turn.
-      summaries = Object.fromEntries(
-        Object.entries(stored).filter(([, v]) => typeof v === 'object' && v !== null),
-      ) as Record<string, Summary>
-      loaded = true
-    }
+    const storeKey = await loadStore($)
 
     if (arg === 'fill') {
       const missing = rows.filter(r => summaries[r.key] === undefined)
@@ -336,7 +441,11 @@ export const register: Register = on => {
     if (arg !== 'print') {
       const opened = await $.ui.open({ id: PANE, title: 'Timeline' })
       if (opened.isPlaced) {
-        return { text: 'timeline: pane opened' }
+        // Opening it is the signal that someone wants to read it: catch up on
+        // whatever accumulated while it was closed, in one fork.
+        const line = await runFill($, rows, storeKey)
+
+        return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
       }
       // No pane here: Remote Control and the VS Code extension attach no pane
       // surface (anthropics/claude-code#99217, #99045), and a narrow terminal
@@ -365,7 +474,8 @@ export const register: Register = on => {
       <Box flexDirection="column" paddingRight={1}>
         <Text dimColor>
           {rows.length} turns
-          {unsummarised > 0 ? ` · ${unsummarised} unsummarised (/timeline fill)` : ''}
+          {unsummarised > 0 ? ` · ${unsummarised} to summarise` : ''}
+          {spent.forks > 0 ? ` · ${spent.forks} fork${spent.forks > 1 ? 's' : ''}, ${k(spent.cached + spent.fresh)} in / ${k(spent.out)} out` : ''}
         </Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
