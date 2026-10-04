@@ -731,12 +731,12 @@ async function runFill(
     // a time and the newest first, and each chunk is drawn as it lands.
     // A call that came back with nothing is tried again on the next draw
     // rather than at the next turn; `missed` bounds how often.
-    const fail = (chunk: Row[], reason: string) => {
+    // A failure says nothing: the card already falls back to the raw prompt.
+    const fail = (chunk: Row[]) => {
       for (const row of chunk) {
         missed(row.key)
       }
       isRetried = true
-      $.ui.log(`timeline: no summary for ${chunk.length} (${reason})`)
     }
     const land = async () => {
       await $.store.set(storeKey, summaries)
@@ -756,7 +756,7 @@ async function runFill(
         prompt: asksPrompt(chunk, language),
       })
       if (!reply.isAnswered) {
-        fail(chunk, reply.reason)
+        fail(chunk)
 
         return
       }
@@ -791,7 +791,7 @@ async function runFill(
           : batchPrompt(chunk, language),
       })
       if (!reply.isAnswered) {
-        fail(chunk, reply.reason)
+        fail(chunk)
 
         return
       }
@@ -1142,7 +1142,8 @@ export const register: Register = (on, options) => {
     // the missing count bound it — once nothing is missing, no call runs.
     if (unsummarised > 0 && !filling) {
       void runFill($, rows, storeKey, language, size, doReplies).then(line => {
-        if (line !== '') {
+        // Only a fill you asked for reports coming back empty.
+        if (line.startsWith('summarised')) {
           $.ui.log(`timeline: ${line}`)
         }
       })
