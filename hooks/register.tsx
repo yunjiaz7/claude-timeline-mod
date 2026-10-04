@@ -2,6 +2,16 @@ import type { Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
 
+// A message row's own render id, seen only while that row is drawn. Preferred
+// as a jump target because it lands on the ask; `anchor` (the turn's first tool
+// row, always in the transcript) is the fallback that also covers history.
+const askIds = new Map<string, string>()
+
+// Rows are derived from the whole transcript, which a pane redraws often. The
+// walk is linear in the session, so cache it and only redo it when the
+// transcript has grown.
+let cache: { size: number; rows: Row[] } | null = null
+
 
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
 
@@ -141,7 +151,33 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
   return rows
 }
 
+function rowsCached(messages: readonly SessionMessage[]): Row[] {
+  if (cache === null || cache.size !== messages.length) {
+    cache = { size: messages.length, rows: rowsOf(messages).filter(r => r.details.length > 0) }
+  }
+
+  return cache.rows
+}
+
 export const register: Register = on => {
+  // A pane is drawn when the engine asks, and new messages are not an ask.
+  // Without this the pane sits on whatever the last draw found.
+  on('turn.complete', ($, e, next) => {
+    cache = null
+    $.ui.invalidate('ui.render')
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
+    const key = e.props.text.replace(/\s+/g, ' ').trim().slice(0, 60)
+    if (key !== '') {
+      askIds.set(key, e.requestId)
+    }
+
+    return next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
@@ -169,7 +205,7 @@ export const register: Register = on => {
     if ('deny' in messages) {
       return { text: `timeline: cannot read this session (${messages.deny})` }
     }
-    const rows = rowsOf(messages).filter(r => r.details.length > 0)
+    const rows = rowsCached(messages)
     if (rows.length === 0) {
       return { text: 'timeline: nothing recorded yet.' }
     }
@@ -188,7 +224,7 @@ export const register: Register = on => {
       return <Text dimColor>cannot read this session</Text>
     }
 
-    const rows = rowsOf(messages).filter(r => r.details.length > 0)
+    const rows = rowsCached(messages)
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
 
     return (
@@ -196,11 +232,18 @@ export const register: Register = on => {
         <Text dimColor>{rows.length} turns that did something</Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
-          const id = row.anchor
+          const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
           const label = `${row.isInjected ? '⏱' : '❯'} ${row.n}  ${head(row.ask, width)}`
 
           return (
-          <Box key={`t${row.n}`} flexDirection="column" marginTop={1}>
+          <Box
+            key={`t${row.n}`}
+            flexDirection="column"
+            marginTop={1}
+            paddingX={1}
+            borderStyle="round"
+            borderDimColor
+          >
             {id === undefined ? (
               <Text bold color={row.isInjected ? 'yellow' : 'cyan'} wrap="wrap">{label}</Text>
             ) : (

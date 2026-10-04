@@ -28,9 +28,13 @@ plugin panes, so `print` is the form that reaches them.
        4 command(s): scp×2, cat×2
 ```
 
-Click a row in the pane to scroll the transcript to that turn. The target is
-the turn's first tool row, whose requestId is its tool_use_id — read straight
-from the transcript, so turns from before the mod was installed jump too.
+Click a row to scroll the transcript to that turn. It aims at the message
+itself where that row has been drawn, and otherwise at the turn's first tool
+row, whose requestId is its tool_use_id — read straight from the transcript,
+so turns from before the mod was installed jump too.
+
+Rows are derived from the whole transcript, so the walk is cached and redone
+only when the transcript grows.
 
 `❯` is a turn you typed. `⏱` is one injected — a background task reporting, a
 scheduled trigger, a slash command.
