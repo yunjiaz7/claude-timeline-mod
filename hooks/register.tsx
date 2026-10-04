@@ -628,14 +628,25 @@ function quotaOf(usage: { rateLimits: readonly { kind: string; percentUsed: numb
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
+/**
+ * What a row without a reply summary says, or null to say nothing. Only the
+ * newest row can still be waiting on a reply, and only a row with a reply can
+ * be summarised: a slash command has neither and sat at `waiting…` for good.
+ */
+export function pendingOf(row: Row, isLast: boolean, isFilling: boolean): string | null {
+  if (row.body.trim() !== '') return isFilling ? 'summarising…' : isLast ? 'waiting…' : null
+  return isLast ? 'waiting…' : null
+}
+
 /** The same rows as text, for a surface that draws no pane. */
 function asText(rows: Row[], store: Record<string, Summary>, doReplies: boolean): string {
   return rows
     .map(r => {
       const summary = store[r.key]
       const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
-      if (summary !== undefined && (summary.did !== '' || doReplies)) {
-        lines.push(`      → ${summary.did === '' ? 'waiting…' : summary.did}`)
+      const did = summary?.did || (doReplies && summary !== undefined ? pendingOf(r, r.n === rows.length, false) : null)
+      if (did) {
+        lines.push(`      → ${did}`)
       }
       if (r.facts.length > 0) {
         lines.push(`      ${r.facts.join(' · ')}`)
@@ -859,6 +870,16 @@ export const register: Register = (on, options) => {
   // Without this the pane sits on whatever the last draw found.
   // A prompt lands at turn.start, and the pane was only redrawn at
   // turn.complete — so a new row sat showing its raw text for the whole turn.
+  // /theme is a slash command and starts no turn, so the tint is re-read as
+  // the row changes rather than at the next prompt.
+  on('config.set', { key: 'theme' }, async ($, e, next) => {
+    const result = await next(e)
+    isTinted = false
+    $.ui.invalidate('ui.render')
+
+    return result
+  })
+
   on('turn.start', ($, e, next) => {
     cache = null
     // The theme may have changed since the last turn; read it again.
@@ -1099,6 +1120,8 @@ export const register: Register = (on, options) => {
           // A Button takes a plain string, so the number sits beside it: short
           // and fixed, it cannot wrap and push the ask under itself.
           const askText = head(title, width - cells(mark) - 3)
+          const did = summary?.did
+            || (doReplies && summary !== undefined ? pendingOf(row, row.n === rows.length, filling) : null)
 
           return (
             <Box
@@ -1133,14 +1156,14 @@ export const register: Register = (on, options) => {
                   />
                 )}
               </Box>
-              {summary !== undefined && (summary.did !== '' || doReplies) && (
+              {did !== null && (
                 // An ask-only row is written the moment the prompt lands and
                 // upgraded when the reply exists. A bare arrow reads as broken,
                 // so a row still waiting says which wait it is in: a call is
                 // running, or there is nothing to run it on yet.
-                <Text wrap="wrap" dimColor={summary.did === '' || row.isInjected}>
+                <Text wrap="wrap" dimColor={!summary?.did || row.isInjected}>
                   {'  → '}
-                  {summary.did === '' ? (filling ? 'summarising…' : 'waiting…') : summary.did}
+                  {did}
                 </Text>
               )}
               {row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}

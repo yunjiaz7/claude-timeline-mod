@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, parseAsks, parseFill, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
+import { cells, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -143,4 +143,12 @@ test('tintOf follows the theme, and the terminal background under auto', () => {
   expect(tintOf('auto', '15;0')).toBe('rgb(66,46,38)')
   expect(tintOf('auto', undefined)).toBe('userMessageBackground')
   expect(tintOf('light-ansi', undefined)).toBe('userMessageBackground')
+})
+
+test('pendingOf waits only on the newest row and summarises only a row with a reply', () => {
+  const row = (body: string) => ({ ...rowsOf([{ role: 'user', text: 'hi', toolUses: [] }])[0]!, body })
+  expect(pendingOf(row(''), true, false)).toBe('waiting…')
+  expect(pendingOf(row(''), false, true)).toBe(null)
+  expect(pendingOf(row('done'), false, true)).toBe('summarising…')
+  expect(pendingOf(row('done'), false, false)).toBe(null)
 })
