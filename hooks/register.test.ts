@@ -64,6 +64,9 @@ test('rowsOf opens a row per sent message and attributes the work after it', () 
   // An injected turn still opens a row, and reads differently.
   expect(rows[1].isInjected).toBe(true)
   expect(rows[1].facts).toEqual([])
+  // Every turn gets a row now, talk-only ones included: a trajectory with
+  // holes in its numbering is not a trajectory.
+  expect(rows.map(r => r.key)).toEqual(['t1', 't2'])
 })
 
 // The jump target is the turn's first tool row: its tool_use_id IS the row's
@@ -87,14 +90,14 @@ test('parseFill keeps the numbered lines and drops everything else', () => {
   const parsed = parseFill([
     "Here's the summary:",
     '',
-    '3|Wrote worklog.py and ran it over the 72MB research session',
-    '  7 | Fixed verbOf: every tally had read cd×N',
+    '3|Read a past session|Wrote worklog.py and ran it over the 72MB research session',
+    '  7 | Why is every command cd | Fixed verbOf: every tally had read cd×N',
     '## not a turn',
-    '12|Gave up on the mount test — the scaffolding outgrew the code',
+    '12|Add a render test|Gave up on it — the scaffolding outgrew the code',
   ].join('\n'))
 
   expect(Object.keys(parsed)).toEqual(['3', '7', '12'])
-  expect(parsed[7]).toBe('Fixed verbOf: every tally had read cd×N')
+  expect(parsed[7]).toEqual({ ask: 'Why is every command cd', did: 'Fixed verbOf: every tally had read cd×N' })
 })
 
 // A terminal lays out in cells: a Chinese headline cut by character count came

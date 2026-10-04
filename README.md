@@ -17,11 +17,16 @@ the morning.
 ```
 
 ```
-❯ 42  run the C2 ablation on the idle GPU
+❯ 42  Run the C2 ablation on a free GPU
       → Queued three runs at lr 1e-4/3e-4/1e-3; best val acc 0.83 at 3e-4
       26 cmd: ssh×22, python3 train.py×3 · Monitor, CronCreate
       ⚠ Exit code 1  CUDA out of memory
 ```
+
+Every turn gets a row, talk-only ones included — a trajectory with holes in
+its numbering is not a trajectory. The headline is the ask as the model read
+it (the point of the turn, not its wording); press it to go read what you
+actually wrote.
 
 `❯` is a turn you typed, `⏱` one injected — a background task reporting, a
 scheduled trigger, a slash command. The headline is the control: press it and
@@ -58,7 +63,11 @@ transcript, so the model reads what it actually did, not a description of it,
 and the API serves the prefix from cache. Every missing turn goes in that one
 call: the cached-prefix read is the expensive part, so amortizing it over all
 of them costs a fraction of one call per turn (~20x on a 150k-token session).
-Results are stored per session and never recomputed.
+Each turn gets both halves — what you asked and what it did — and results are
+stored per session and never recomputed. `fill` reports what the call cost:
+`120.4k cached + 1.1k fresh in, 0.6k out`. A `cache_read` smaller than the
+fresh input means the prefix had lapsed and that fork paid full price for the
+transcript.
 
 It is never automatic. A fork is cheap only while the prefix is cached — after
 an hour idle, or a `/model` switch, the same call costs about ten times as

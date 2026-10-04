@@ -14,7 +14,8 @@ let cache: { size: number; rows: Row[] } | null = null
 
 // Summaries, by anchor. Written once, read from the store on every load — a
 // fork is the expensive part of this mod and nothing is ever recomputed.
-let summaries: Record<string, string> = {}
+type Summary = { ask: string; did: string }
+let summaries: Record<string, Summary> = {}
 let loaded = false
 
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
@@ -118,6 +119,8 @@ type Row = {
   errors: string[]
   /** The first tool row of this turn, whose requestId is its tool_use_id. */
   anchor?: string
+  /** Stable key for the stored summary; turns are append-only, so `n` holds. */
+  key: string
 }
 
 /** One row per message you sent, holding what the turns after it actually did. */
@@ -171,6 +174,7 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
       close()
       rows.push({
         n: rows.length + 1,
+        key: `t${rows.length + 1}`,
         ask: m.text,
         isInjected: INJECTED.test(m.text),
         facts: [],
@@ -187,10 +191,10 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
 
 function rowsCached(messages: readonly SessionMessage[]): Row[] {
   if (cache === null || cache.size !== messages.length) {
-    cache = {
-      size: messages.length,
-      rows: rowsOf(messages).filter(r => r.facts.length > 0 || r.errors.length > 0),
-    }
+    // Every turn, including the ones that only talked: a trajectory with gaps
+    // in its numbering is not a trajectory, and a turn that decided something
+    // without touching a file is often the one that mattered.
+    cache = { size: messages.length, rows: rowsOf(messages) }
   }
 
   return cache.rows
@@ -202,29 +206,33 @@ function rowsCached(messages: readonly SessionMessage[]): Row[] {
  * one call per turn would pay that read again each time.
  */
 function fillPrompt(rows: Row[]): string {
-  const asked = rows.map(r => `${r.n}. ${head(r.ask, 90)}`).join('\n')
+  const asked = rows.map(r => `${r.n}. ${head(r.ask, 110)}`).join('\n')
 
   return [
-    'Summarise what YOU did in each of the turns below — not what was discussed,',
-    'and not what I asked, which I can already read.',
+    'For each turn below, write two things: what I asked, and what YOU did about it.',
     '',
     'Output one line per turn, nothing else. No preamble, no closing line, no markdown:',
-    '<number>|<up to 16 words, past tense, naming the concrete thing>',
+    '<number>|<my ask in up to 10 words>|<what you did in up to 16 words, past tense>',
     '',
-    'Name the file, the fix, the finding, the number. If the turn failed or was',
-    'abandoned, say so plainly — never smooth a failure into an accomplishment.',
+    'The ask side is the point of the turn, not its wording — say what I wanted,',
+    'not how I phrased it. The did side names the concrete thing: the file, the',
+    'fix, the finding, the number. A turn that only talked still did something:',
+    'say what was decided or explained.',
+    '',
+    'If a turn failed, stalled or was abandoned, say so plainly — never smooth a',
+    'failure into an accomplishment.',
     '',
     'Turns:',
     asked,
   ].join('\n')
 }
 
-export function parseFill(text: string): Record<number, string> {
-  const out: Record<number, string> = {}
+export function parseFill(text: string): Record<number, { ask: string; did: string }> {
+  const out: Record<number, { ask: string; did: string }> = {}
   for (const line of text.split('\n')) {
-    const match = /^\s*(\d+)\s*\|\s*(.+?)\s*$/.exec(line)
+    const match = /^\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*$/.exec(line)
     if (match !== null) {
-      out[Number(match[1])] = match[2]
+      out[Number(match[1])] = { ask: match[2], did: match[3] }
     }
   }
 
@@ -276,12 +284,17 @@ export const register: Register = on => {
     const storeKey = `timeline:${await $.session.id()}`
 
     if (!loaded) {
-      summaries = ((await $.store.get(storeKey)) as Record<string, string>) ?? {}
+      const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
+      // v0 stored one string per turn. Those lack the ask side, so drop them
+      // and let `fill` write both — a refill is one call, not one per turn.
+      summaries = Object.fromEntries(
+        Object.entries(stored).filter(([, v]) => typeof v === 'object' && v !== null),
+      ) as Record<string, Summary>
       loaded = true
     }
 
     if (arg === 'fill') {
-      const missing = rows.filter(r => r.anchor !== undefined && summaries[r.anchor] === undefined)
+      const missing = rows.filter(r => summaries[r.key] === undefined)
       if (missing.length === 0) {
         return { text: 'timeline: every turn already has a summary.' }
       }
@@ -294,9 +307,9 @@ export const register: Register = on => {
       const parsed = parseFill(reply.text)
       let written = 0
       for (const row of missing) {
-        const line = parsed[row.n]
-        if (line !== undefined && row.anchor !== undefined) {
-          summaries[row.anchor] = line
+        const got = parsed[row.n]
+        if (got !== undefined) {
+          summaries[row.key] = got
           written += 1
         }
       }
@@ -304,7 +317,16 @@ export const register: Register = on => {
       cache = null
       $.ui.invalidate('ui.render')
 
-      return { text: `timeline: summarised ${written} of ${missing.length} turns.` }
+      // What it actually cost, measured. `cache_read` near zero means the
+      // prefix had lapsed and this fork paid full price for the transcript.
+      const u = reply.usage
+      const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+      const cost = u === undefined
+        ? ''
+        : `\n  ${k(u.cache_read_input_tokens)} cached + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
+          + `${u.cache_read_input_tokens < u.input_tokens ? '  ← prefix had lapsed, this one paid full price' : ''}`
+
+      return { text: `timeline: summarised ${written} of ${missing.length} turns in one fork.${cost}` }
     }
 
     if (rows.length === 0) {
@@ -337,7 +359,7 @@ export const register: Register = on => {
 
     const rows = rowsCached(messages)
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
-    const unsummarised = rows.filter(r => r.anchor !== undefined && summaries[r.anchor] === undefined).length
+    const unsummarised = rows.filter(r => summaries[r.key] === undefined).length
 
     return (
       <Box flexDirection="column" paddingRight={1}>
@@ -348,9 +370,10 @@ export const register: Register = on => {
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
-          const summary = row.anchor === undefined ? undefined : summaries[row.anchor]
+          const summary = summaries[row.key]
           const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}`
-          const headline = `${mark}  ${head(row.ask, width - cells(mark) - 2)}`
+          const title = summary?.ask ?? row.ask
+          const headline = `${mark}  ${head(title, width - cells(mark) - 2)}`
 
           return (
             <Box
@@ -382,7 +405,7 @@ export const register: Register = on => {
               {summary !== undefined && (
                 <Text wrap="wrap" dimColor={row.isInjected}>
                   {'  → '}
-                  {summary}
+                  {summary.did}
                 </Text>
               )}
               {row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
