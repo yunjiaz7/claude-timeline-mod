@@ -14,7 +14,7 @@
         "Français",
         "Deutsch"
       ],
-      "default": "中文",
+      "default": "English",
       "title": "Summary language"
     },
     "replySummaries": {
