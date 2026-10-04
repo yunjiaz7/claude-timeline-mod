@@ -21,7 +21,7 @@ the morning.
 ```
 /timeline help    # every command, and what the settings are now
 /timeline         # open the pane (docks right of the transcript)
-/timeline find    # a search box at the top of the pane; the same again closes it
+/timeline find    # hide or show the search box at the top of the pane
 /timeline fill    # summarise the turns that have none yet
 /timeline close
 ```
@@ -92,8 +92,8 @@ anything else to happen.
 
 ## Search
 
-`/timeline find` opens a bordered search box at the top of the pane, and
-`/timeline find` again closes it. Type what you remember of a turn, in any
+The pane opens with a bordered search box at its top. `/timeline find` puts
+it away for the session, and the same again brings it back. Type what you remember of a turn, in any
 words or language, and press Enter: one Haiku call reads every turn's
 summary and prompt and returns the ones that match by meaning, best first.
 The pane then shows only those cards — click one to jump to it. `[ back to timeline ]`

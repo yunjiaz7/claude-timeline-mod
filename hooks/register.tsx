@@ -171,6 +171,14 @@ function step($: EngineInterface): void {
       if (markedN !== null && markedN !== scrolledTo && !isFinding) {
         scrolledTo = markedN
         void $.ui.scroll({ to: { key: `t${markedN}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
+      } else if (markedN !== null && markedN !== scrolledTo && matches === null) {
+        // Under the box the cards are scrolled here, so following is too.
+        scrolledTo = markedN
+        const to = fitTop(heights, findTop, markedN - 1, paneRows - HEAD_ROWS)
+        if (to !== findTop) {
+          findTop = to
+          $.ui.invalidate('ui.render')
+        }
       }
       if (ticksLeft > 0) {
         ticksLeft -= 1
@@ -354,7 +362,9 @@ export function cells(text: string): number {
 
 // The search box. Module state: a reload closes it, which is what a reload
 // of a search nobody is typing into should do.
-let isFinding = false
+// Open by default: the box is part of the pane, and `/timeline find` puts it
+// away for the session.
+let isFinding = true
 let query = ''
 /** Row numbers, best first; null before a search has answered. */
 let matches: number[] | null = null
@@ -365,6 +375,32 @@ let isSearching = false
 // frame late on every tick and flickered.
 let findTop = 0
 let findCount = 0
+/** Rows each drawn card takes, and the rows the pane shows: what following needs. */
+let heights: number[] = []
+let paneRows = 40
+/** The box, its status, its hint and the gap above the first card. */
+const HEAD_ROWS = 6
+
+/**
+ * The first card to draw so that card `at` is inside `room` rows: unchanged
+ * when it already is, as a window's `nearest` scroll would leave it.
+ */
+export function fitTop(rowsOf: readonly number[], top: number, at: number, room: number): number {
+  if (at < top) {
+    return at
+  }
+  let from = top
+  let used = 0
+  for (let i = from; i <= at; i += 1) {
+    used += rowsOf[i] ?? 0
+  }
+  while (used > room && from < at) {
+    used -= rowsOf[from] ?? 0
+    from += 1
+  }
+
+  return from
+}
 
 /**
  * One call: every turn as a line, and the thing being looked for. The model
@@ -1204,7 +1240,7 @@ export const register: Register = (on, options) => {
           'timeline — what this session actually did, turn by turn.',
           '',
           '  /timeline                 open the pane (or print it where none can be drawn)',
-          '  /timeline find [words]    search box at the top of the pane; again to close it',
+          '  /timeline find [words]    search the turns by meaning; bare, hides or shows the search box',
           '  /timeline fill            summarise everything missing now',
           '  /timeline cost            what the summaries took: prompts, replies, share of the 5h window',
           '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
@@ -1293,11 +1329,11 @@ export const register: Register = (on, options) => {
     }
 
     if (verb === 'find') {
-      // Bare, it is a switch: the box opens, and the same words close it.
+      // Bare, it is a switch: the box closes, and the same words open it.
       if (rest === '' && isFinding) {
         closeFind($)
 
-        return { text: 'timeline: search closed' }
+        return { text: 'timeline: search box hidden — `/timeline find` brings it back' }
       }
       // `focus` hands the keyboard to the pane, where the field asks for it.
       const opened = await $.ui.open({ id: PANE, title: 'Timeline', focus: true })
@@ -1315,7 +1351,7 @@ export const register: Register = (on, options) => {
       }
       $.ui.invalidate('ui.render')
 
-      return { text: 'timeline: search open — type in the box and press Enter. `/timeline find` again closes it.' }
+      return { text: 'timeline: search box shown — type in it and press Enter. `/timeline find` again hides it.' }
     }
 
     if (verb === 'fill') {
@@ -1411,6 +1447,21 @@ export const register: Register = (on, options) => {
       ? matches.map(n => rows[n - 1]).filter((r): r is Row => r !== undefined)
       : rows
     findCount = shown.length
+    paneRows = e.props.scroll?.bodyRows ?? paneRows
+    // A card's rows: its border, the gap above it, its title and what is
+    // drawn under that. The same lines the card draws below.
+    heights = shown.map(row => {
+      const summary = summaries[row.key]
+      const did = !doReplies
+        ? null
+        : summary?.did || (summary !== undefined ? pendingOf(row, isRunning && row.n === rows.length, filling) : null)
+      const errors = doReplies ? Math.min(2, row.errors.length) + (row.errors.length > 2 ? 1 : 0) : 0
+
+      return 4
+        + (did === null ? 0 : wrapCells(`  → ${did}`, width).length)
+        + (doReplies && row.facts.length > 0 ? wrapCells(`  ${row.facts.join(' · ')}`, width).length : 0)
+        + errors
+    })
     const status = isSearching
       ? 'searching…'
       : matches === null
@@ -1458,7 +1509,7 @@ export const register: Register = (on, options) => {
               )}
               {matches !== null && <Text color="inactive">·</Text>}
               <Text color="claude" bold>/timeline find</Text>
-              <Text color="inactive">closes the search box</Text>
+              <Text color="inactive">hides the search box</Text>
             </Box>
           </Box>
         )}

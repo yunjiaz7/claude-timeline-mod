@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, chunksOf, costText, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cells, chunksOf, costText, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -191,4 +191,12 @@ test('parseFind keeps the order given, each number once, and only rows that exis
   expect(parseFind('12, 3, 12, 40', 20)).toEqual([12, 3])
   expect(parseFind('none', 20)).toEqual([])
   expect(parseFind('Turns 7 and 2.', 20)).toEqual([7, 2])
+})
+
+test('fitTop moves the first card only as far as it takes to show the one asked for', () => {
+  const four = [4, 4, 4, 4, 4, 4]
+  expect(fitTop(four, 0, 1, 12)).toBe(0)
+  expect(fitTop(four, 0, 5, 12)).toBe(3)
+  expect(fitTop(four, 4, 1, 12)).toBe(1)
+  expect(fitTop([4, 30, 4], 0, 1, 12)).toBe(1)
 })
