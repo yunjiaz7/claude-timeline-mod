@@ -845,8 +845,9 @@ async function runFill(
 
 let sessionKey: string | null = null
 
-// The theme has no warm fill of its own, so the marked card takes a tint of
-// the accent picked by theme name; any other theme keeps the theme's own key.
+// The pane sits on a grey of the theme's, so the marked card takes the
+// terminal's own ground — white on a light theme, black on a dark one — and
+// reads as lifted off the pane. Any other theme keeps the theme's own key.
 let tint = 'userMessageBackground'
 let isTinted = false
 
@@ -859,8 +860,8 @@ export function tintOf(theme: string, colorfgbg: string | undefined): string {
     mode = !Number.isInteger(bg) || bg < 0 || bg > 15 ? '' : bg <= 6 || bg === 8 ? 'dark' : 'light'
   }
   if (mode.includes('ansi')) return 'userMessageBackground'
-  if (mode.startsWith('light')) return 'rgb(252,236,226)'
-  if (mode.startsWith('dark')) return 'rgb(66,46,38)'
+  if (mode.startsWith('light')) return 'rgb(255,255,255)'
+  if (mode.startsWith('dark')) return 'rgb(0,0,0)'
   return 'userMessageBackground'
 }
 

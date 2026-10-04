@@ -137,10 +137,10 @@ test('resolveLanguage takes a name, a code, or a prefix', () => {
 })
 
 test('tintOf follows the theme, and the terminal background under auto', () => {
-  expect(tintOf('light', undefined)).toBe('rgb(252,236,226)')
-  expect(tintOf('dark', '0;15')).toBe('rgb(66,46,38)')
-  expect(tintOf('auto', '0;15')).toBe('rgb(252,236,226)')
-  expect(tintOf('auto', '15;0')).toBe('rgb(66,46,38)')
+  expect(tintOf('light', undefined)).toBe('rgb(255,255,255)')
+  expect(tintOf('dark', '0;15')).toBe('rgb(0,0,0)')
+  expect(tintOf('auto', '0;15')).toBe('rgb(255,255,255)')
+  expect(tintOf('auto', '15;0')).toBe('rgb(0,0,0)')
   expect(tintOf('auto', undefined)).toBe('userMessageBackground')
   expect(tintOf('light-ansi', undefined)).toBe('userMessageBackground')
 })
