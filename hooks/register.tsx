@@ -45,6 +45,7 @@ const onScreen = new Set<string>()
 let marked: string | null = null
 /** Row keys in transcript order, so the topmost visible one can be picked. */
 let lastSeen: string[] = []
+let probes = 0
 
 function keyOf(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 60)
@@ -668,6 +669,16 @@ export const register: Register = (on, options) => {
     }
     askIds.set(key, e.requestId)
 
+    // TEMPORARY: say once what the surface actually reports, and whether the
+    // key matches a row. Removed as soon as it has answered.
+    if (probes < 3) {
+      probes += 1
+      const shape = e.props.onScreen === undefined ? 'absent'
+        : e.props.onScreen === null ? 'null (off-screen)'
+        : `rows ${e.props.onScreen.first}-${e.props.onScreen.last} of ${e.props.onScreen.of}`
+      $.ui.log(`timeline/probe: onScreen=${shape} · key="${key.slice(0, 28)}" · matchesARow=${lastSeen.includes(key)} · rowsKnown=${lastSeen.length}`)
+    }
+
     // `onScreen` is null while the row is drawn outside the viewport, and
     // absent on a surface that does not say — then nothing is marked, which is
     // a fine thing for it to do.
@@ -857,7 +868,11 @@ export const register: Register = (on, options) => {
           const summary = summaries[row.key]
           const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}`
           const title = summary?.ask ?? row.ask
-          const headline = `${mark}  ${head(title, width - cells(mark) - 2)}`
+          // The number carries the accent and the ask carries the default tone,
+          // so a row reads as a label and a title rather than one grey string.
+          // A Button takes a plain string, so the number sits beside it: short
+          // and fixed, it cannot wrap and push the ask under itself.
+          const askText = head(title, width - cells(mark) - 3)
 
           return (
             <Box
@@ -869,23 +884,25 @@ export const register: Register = (on, options) => {
               borderColor={keyOf(row.ask) === marked ? 'claude' : 'promptBorder'}
               borderDimColor={keyOf(row.ask) !== marked}
             >
-              {/* The whole headline is the control: a row needs a jump, not a
-                  word saying "jump". The focus ring and the pointer are the
-                  affordance, so no icon has to be invented or borrowed. A
-                  Button takes one plain string, so nothing nests inside it. */}
-              {id === undefined ? (
-                <Text wrap="truncate-end" dimColor={row.isInjected}>{headline}</Text>
-              ) : (
-                <Button
-                  plain
-                  key={`j${row.n}`}
-                  label={headline}
-                  dimColor={row.isInjected}
-                  onPress={() => {
-                    void $.ui.scroll({ to: { requestId: id }, block: 'start' })
-                  }}
-                />
-              )}
+              <Box flexDirection="row">
+                <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
+                  {mark}
+                  {'  '}
+                </Text>
+                {id === undefined ? (
+                  <Text wrap="truncate-end" dimColor={row.isInjected}>{askText}</Text>
+                ) : (
+                  <Button
+                    plain
+                    key={`j${row.n}`}
+                    label={askText}
+                    dimColor={row.isInjected}
+                    onPress={() => {
+                      void $.ui.scroll({ to: { requestId: id }, block: 'start' })
+                    }}
+                  />
+                )}
+              </Box>
               {summary !== undefined && (summary.did !== '' || doReplies) && (
                 // An ask-only row is written the moment the prompt lands and
                 // upgraded when the reply exists. A bare arrow reads as broken,
