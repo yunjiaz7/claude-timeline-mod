@@ -154,7 +154,9 @@ are dropped and the next fill rewrites them — one call, not one per turn.
 The turn the transcript is showing is marked, and the pane scrolls to keep that
 card in view. Every kind of row reports `onScreen` — the ask, each block of the
 reply, each tool call — so each is mapped to its turn, and the earliest turn in
-the latest burst of reports is the one marked.
+the latest burst of reports is the one marked. When the newest turn is on
+screen it is marked instead: you are at the live end, and a new prompt should
+take the marker with it.
 
 Reports alone are not enough. The engine answers a row's draw from memory when
 its props are ones it has seen, so a row returning to where it was — the bottom

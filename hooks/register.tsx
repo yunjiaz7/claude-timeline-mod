@@ -83,15 +83,25 @@ function recompute(): void {
     }
   }
   let top: number | undefined
+  let atEnd = false
   for (const [id, seen] of visible) {
     if (seen.at < latest - FRESH_MS) {
       visible.delete(id)
       continue
     }
     const n = turnOf(seen)
+    if (n === latestN) {
+      atEnd = true
+    }
     if (n !== undefined && (top === undefined || n < top)) {
       top = n
     }
+  }
+  // With the newest turn on screen you are following the live end, and that is
+  // the turn to mark — not the tail of the one before it, which is all that
+  // "earliest in the viewport" finds the moment a new prompt lands.
+  if (atEnd && latestN > 0) {
+    top = latestN
   }
   if (top === undefined || top === markedN) {
     return
