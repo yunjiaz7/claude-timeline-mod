@@ -85,7 +85,11 @@ very differently:
   tokens. This is the live case, and it is roughly forty times cheaper than
   the alternative on a long session.
 - **Several missing** — one `$.model.fork`, which re-reads the whole cached
-  transcript once and writes every missing line from it. The prefix read is
+  transcript once and writes every missing line from it.
+- **No reply to read** — a turn still running, or a resumed session with no
+  thread to fork yet: the ask is always there, so one `complete` over all of
+  them writes the ask side alone. Those rows stay open and a later fill
+  upgrades them once the reply exists. The prefix read is
   what a fork costs and it does not shrink with the work, so it is worth
   paying once across many turns and never once per turn. Measured over 35
   turns on a 414k-token session: 414.3k cached + 1.8k fresh in, 4.9k out.

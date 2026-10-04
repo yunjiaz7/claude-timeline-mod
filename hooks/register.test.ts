@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, parseFill, rowsOf, verbOf } from './register'
+import { cells, parseAsks, parseFill, rowsOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -106,4 +106,13 @@ test('cells counts CJK as two and ASCII as one', () => {
   expect(cells('abc')).toBe(3)
   expect(cells('中文')).toBe(4)
   expect(cells('❯ 17 那我')).toBe(9)
+})
+
+// The asks are always there, even when the reply is not — a turn still running,
+// or a resumed session with no thread to fork. An ask-only line beats no line.
+test('parseAsks reads the two-field ask-only form', () => {
+  const parsed = parseAsks(['Summary:', '4|改用 complete 只读单轮', '  9 | Ask why other sessions cannot see it'].join('\n'))
+
+  expect(parsed[4]).toBe('改用 complete 只读单轮')
+  expect(parsed[9]).toBe('Ask why other sessions cannot see it')
 })

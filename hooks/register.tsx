@@ -294,6 +294,37 @@ function onePrompt(row: Row, language: string): string {
   ].join('\n')
 }
 
+/**
+ * The asks alone, for turns whose reply is not available: still in flight, or
+ * in a resumed session with no forkable thread. A prompt is always there, so a
+ * row can always say what it was for even when it cannot say what came of it.
+ */
+function asksPrompt(rows: Row[], language: string): string {
+  return [
+    'Below are things a user asked in a coding session. For each, say what they',
+    'wanted — the point of the ask, not its wording.',
+    '',
+    'Output one line per item, nothing else. No preamble, no markdown:',
+    '<number>|<up to 10 words>',
+    '',
+    `Write in ${language}, whatever language the ask itself is in.`,
+    '',
+    ...rows.map(r => `${r.n}. ${head(r.ask, 110)}`),
+  ].join('\n')
+}
+
+export function parseAsks(text: string): Record<number, string> {
+  const out: Record<number, string> = {}
+  for (const line of text.split('\n')) {
+    const match = /^\s*(\d+)\s*\|\s*(.+?)\s*$/.exec(line)
+    if (match !== null) {
+      out[Number(match[1])] = match[2]!
+    }
+  }
+
+  return out
+}
+
 export function parseFill(text: string): Record<number, { ask: string; did: string }> {
   const out: Record<number, { ask: string; did: string }> = {}
   for (const line of text.split('\n')) {
@@ -351,13 +382,13 @@ async function runFill(
   } else if (size === triedAt) {
     return ''
   }
-  // A turn still in flight has no reply to summarise yet — its row exists the
-  // moment the prompt lands, and summarising that is what produced a stream of
-  // `0 of 1` fills over a 159-token prompt. It is picked up on the next draw.
-  const missing = rows.filter(
-    r => summaries[r.key] === undefined && !failed.has(r.key) && r.body.trim() !== '',
-  )
-  if (missing.length === 0 || filling) {
+  // A row with no `did` yet is still open: an ask-only summary is written for
+  // a turn whose reply is not available, and upgraded once it is.
+  const open = (r: Row) =>
+    !failed.has(r.key) && (summaries[r.key] === undefined || summaries[r.key]?.did === '')
+  const full = rows.filter(r => open(r) && r.body.trim() !== '')
+  const asksOnly = rows.filter(r => open(r) && r.body.trim() === '' && summaries[r.key] === undefined)
+  if ((full.length === 0 && asksOnly.length === 0) || filling) {
     return ''
   }
   filling = true
@@ -365,45 +396,83 @@ async function runFill(
   const startedAt = await $.clock.now()
   const before = quotaOf(await $.session.usage())
   try {
+    let written = 0
+    let fellBack: Row[] = []
+    const usages: ({ input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined)[] = []
+
     // One missing turn is given to `complete`, which carries no history: it
     // reads that turn alone. A fork would re-read the whole transcript to
     // write one line, and the prefix read is what a fork costs — about forty
-    // times this on a long session. Several missing turns go the other way:
-    // one fork amortizes that read across all of them.
-    const only = missing.length === 1 ? missing[0] : undefined
-    const reply = only === undefined
-      ? await $.model.fork({ prompt: fillPrompt(missing, language) })
-      : await $.model.complete({
-          model: 'haiku',
-          effort: 'low',
-          maxTokens: 200,
-          prompt: onePrompt(only, language),
-        })
-    if (!reply.isAnswered) {
-      return `could not summarise (${reply.reason})`
+    // times this on a long session. Several go the other way: one fork
+    // amortizes that read across all of them.
+    const only = full.length === 1 ? full[0] : undefined
+    if (full.length > 0) {
+      const reply = only === undefined
+        ? await $.model.fork({ prompt: fillPrompt(full, language) })
+        : await $.model.complete({
+            model: 'haiku',
+            effort: 'low',
+            maxTokens: 200,
+            prompt: onePrompt(only, language),
+          })
+      if (reply.isAnswered) {
+        usages.push(reply.usage)
+        const parsed = parseFill(reply.text)
+        for (const row of full) {
+          const got = parsed[row.n]
+          if (got === undefined) {
+            failed.add(row.key)
+          } else {
+            summaries[row.key] = got
+            written += 1
+          }
+        }
+      } else if (reply.reason === 'nothing-to-fork') {
+        // A resumed session has no thread to fork until its own first turn
+        // ends. The asks are still there, so summarise those instead of
+        // leaving the whole timeline unwritten.
+        fellBack = full
+      } else {
+        for (const row of full) {
+          failed.add(row.key)
+        }
+      }
     }
 
-    const parsed = parseFill(reply.text)
-    let written = 0
-    for (const row of missing) {
-      const got = parsed[row.n]
-      if (got === undefined) {
-        // The model answered but not about this turn. Do not ask again: a row
-        // retried on every draw is a loop that bills for each pass.
-        failed.add(row.key)
-      } else {
-        summaries[row.key] = got
-        written += 1
+    const asks = [...asksOnly, ...fellBack]
+    if (asks.length > 0) {
+      const reply = await $.model.complete({
+        model: 'haiku',
+        effort: 'low',
+        maxTokens: Math.min(4000, 40 + asks.length * 30),
+        prompt: asksPrompt(asks, language),
+      })
+      if (reply.isAnswered) {
+        usages.push(reply.usage)
+        const parsed = parseAsks(reply.text)
+        for (const row of asks) {
+          const got = parsed[row.n]
+          if (got !== undefined) {
+            // `did` stays empty: the row is written but still open, and a
+            // later fill upgrades it once the reply exists.
+            summaries[row.key] = { ask: got, did: '' }
+            written += 1
+          }
+        }
       }
+    }
+
+    if (written === 0) {
+      return 'nothing to summarise yet'
     }
     await $.store.set(storeKey, summaries)
     cache = null
 
-    const u = reply.usage
-    const used = u === undefined ? 0 : u.cache_read_input_tokens + u.input_tokens
-    spent.calls += 1
+    const used = usages.reduce((n, u) => n + (u === undefined ? 0 : u.cache_read_input_tokens + u.input_tokens), 0)
+    const out = usages.reduce((n, u) => n + (u?.output_tokens ?? 0), 0)
+    spent.calls += usages.length
     spent.input += used
-    spent.out += u?.output_tokens ?? 0
+    spent.out += out
     // The quota windows move in tenths of a percent, so the difference across
     // the call is what this summary actually took out of the subscription.
     const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
@@ -415,19 +484,12 @@ async function runFill(
     $.ui.invalidate('ui.render')
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
-    const how = only === undefined ? 'fork' : 'haiku'
-    if (u === undefined) {
-      return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s (${how})`
-    }
+    const asked = full.length + asksOnly.length
+    const partial = asks.length > 0 ? `, ${asks.length} ask-only` : ''
 
-    // Only a fork has a prefix to lose; `complete` carries no history, so its
-    // cache_read is always zero and the warning would always be wrong.
-    const lapsed = only === undefined && u.cache_read_input_tokens < u.input_tokens
-
-    return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s (${how})`
-      + ` · ${k(used)} in, ${k(u.output_tokens)} out`
+    return `summarised ${written} of ${asked} in ${seconds.toFixed(1)}s${partial}`
+      + ` · ${k(used)} in, ${k(out)} out`
       + ` · ${quota.toFixed(1)}% of the 5h window`
-      + (lapsed ? '  ← prefix had lapsed, paid full price' : '')
   } finally {
     filling = false
   }
