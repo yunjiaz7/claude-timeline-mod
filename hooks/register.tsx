@@ -1210,13 +1210,10 @@ export const register: Register = (on, options) => {
             ?? row.anchor
             ?? above[row.n - 1]
           const summary = summaries[row.key]
-          const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}`
+          // What the terminal draws for the number's Button: `[ 12 ]`.
+          const mark = `[ ${row.n} ]`
           const title = summary?.ask ?? row.ask
-          // The number carries the accent and the ask carries the default tone,
-          // so a row reads as a label and a title rather than one grey string.
-          // A Button takes a plain string, so the number sits beside it: short
-          // and fixed, it cannot wrap and push the ask under itself.
-          const askText = head(title, width - cells(mark) - 3)
+          const askText = head(title, width - cells(mark) - 4)
           // Replies off is also "show me only what I asked": the reply line,
           // the tally and the errors all go, though what is stored is kept.
           const did = !doReplies
@@ -1240,32 +1237,29 @@ export const register: Register = (on, options) => {
               backgroundColor={row.n === nowAt ? 'inverseText' : undefined}
             >
               <Box flexDirection="row">
-                {/* A raw prompt can measure wider than `cells` counted it; held
-                    at its own width, the number is not what gives way. */}
-                <Box flexShrink={0}>
-                  <Text color={row.isInjected ? 'text' : 'claude'} dimColor={row.isInjected} bold>
-                    {mark}
-                    {'  '}
-                  </Text>
+                {/* The number is the control and the title is text. A Button's
+                    label cannot be coloured at rest — it takes the terminal's
+                    foreground — so a title drawn as one vanished wherever the
+                    theme and the terminal disagree (a light pane, white text).
+                    A primary Button is drawn in the accent and a Text takes the
+                    theme's colour, so both hold on any ground. Held at its own
+                    width, the number is never what gives way. */}
+                <Box flexShrink={0} marginRight={1}>
+                  {id === undefined ? (
+                    <Text color="claude" dimColor={row.isInjected} bold>{mark}</Text>
+                  ) : (
+                    <Button
+                      key={`j${row.n}`}
+                      variant="primary"
+                      label={String(row.n)}
+                      dimColor={row.isInjected}
+                      onPress={() => {
+                        void $.ui.scroll({ to: { requestId: id }, block: 'start' })
+                      }}
+                    />
+                  )}
                 </Box>
-                {id === undefined ? (
-                  <Text wrap="truncate-end" color="text" dimColor={row.isInjected}>{askText}</Text>
-                ) : (
-                  <Button
-                    plain
-                    key={`j${row.n}`}
-                    label={askText}
-                    dimColor={row.isInjected}
-                    // A Button's label takes the terminal's foreground and no
-                    // colour of its own at rest; under the pointer it can take
-                    // the theme's, which is what keeps it readable when the
-                    // theme and the terminal disagree.
-                    hover={{ color: 'text' }}
-                    onPress={() => {
-                      void $.ui.scroll({ to: { requestId: id }, block: 'start' })
-                    }}
-                  />
-                )}
+                <Text wrap="truncate-end" color="text" dimColor={row.isInjected}>{askText}</Text>
               </Box>
               {did !== null && (
                 // An ask-only row is written the moment the prompt lands and
