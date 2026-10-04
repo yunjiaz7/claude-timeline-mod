@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, chunksOf, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
+import { cells, chunksOf, costText, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -156,4 +156,17 @@ test('pendingOf waits only on the newest row and summarises only a row with a re
 test('chunksOf cuts a list into runs of the given size', () => {
   expect(chunksOf([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]])
   expect(chunksOf([], 2)).toEqual([])
+})
+
+test('costText splits prompts from replies and keeps what was spent before the split', () => {
+  const text = costText(
+    { calls: 10, input: 9000, out: 900, quota: 0.2,
+      asks: { calls: 3, input: 1000, out: 100 }, replies: { calls: 4, input: 5000, out: 600 } },
+    true,
+  )
+  expect(text).toContain('prompts     3 calls · 1.0k in / 100 out · ≈ $0.002')
+  expect(text).toContain('replies     4 calls · 5.0k in / 600 out · ≈ $0.008')
+  expect(text).toContain('earlier     3 calls · 3.0k in / 200 out')
+  expect(text).toContain('/timeline replies off')
+  expect(costText({ calls: 0, input: 0, out: 0, quota: 0 }, true)).toContain('nothing spent')
 })

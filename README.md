@@ -109,9 +109,11 @@ re-read the whole cached prefix to fail again — 33 calls and two million
 tokens for a timeline that stayed unwritten. It is also what the measured cost
 argued against: 3.8k tokens for 118 asks, against 414k for one fork.
 
-The pane shows no cost. `/timeline fill` forces a fill by hand and reports
-what it took and the running total: tokens in and out, and the share of the
-five-hour window the calls moved, which is what a subscription actually spends.
+The pane shows no cost. `/timeline cost` does: calls and tokens for the
+prompt summaries and for the reply summaries apart, the share of the
+five-hour window they moved in all — which is what a subscription actually
+spends — and how to turn the reply side off. `/timeline fill` forces a fill
+by hand.
 
 What the model writes sits beside what the transcript recorded, never instead
 of it: the command tally stays, and an error is printed as the tool reported

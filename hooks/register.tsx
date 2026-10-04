@@ -234,7 +234,10 @@ function missed(key: string): void {
  * something new to try it on, rather than on every redraw.
  */
 let triedAt = -1
-type Spent = { calls: number; input: number; out: number; quota: number }
+type Side = { calls: number; input: number; out: number }
+// `asks` and `replies` came later than the totals: a session summarised before
+// them has totals larger than the two sides, and the rest is shown as earlier.
+type Spent = Side & { quota: number; asks?: Side; replies?: Side }
 
 /**
  * What this session's fills have cost. Kept in the store, not just in memory:
@@ -247,6 +250,44 @@ function spentLine(): string {
   return spent.calls === 0
     ? ''
     : `${spent.quota.toFixed(1)}% of 5h · ${k(spent.input)} in / ${k(spent.out)} out · ${spent.calls} call${spent.calls > 1 ? 's' : ''}`
+}
+
+// Haiku's API list price per million tokens. A subscription pays in quota, not
+// dollars, so this is only a scale for comparing the two sides.
+const USD_IN = 1
+const USD_OUT = 5
+
+/** The answer to `/timeline cost`: each side of the summaries, then how to stop the larger one. */
+export function costText(total: Spent, doReplies: boolean): string {
+  if (total.calls === 0) {
+    return 'timeline cost: nothing spent in this session yet.'
+  }
+  const none: Side = { calls: 0, input: 0, out: 0 }
+  const asks = total.asks ?? none
+  const replies = total.replies ?? none
+  const earlier: Side = {
+    calls: total.calls - asks.calls - replies.calls,
+    input: total.input - asks.input - replies.input,
+    out: total.out - asks.out - replies.out,
+  }
+  const line = (name: string, side: Side, note = '') =>
+    `  ${name.padEnd(9)}${String(side.calls).padStart(4)} calls · ${k(side.input)} in / ${k(side.out)} out`
+    + ` · ≈ $${((side.input * USD_IN + side.out * USD_OUT) / 1e6).toFixed(3)}${note}`
+
+  return [
+    'timeline cost — what the summaries in this session took (Haiku)',
+    '',
+    line('prompts', asks, '   summarising what you asked'),
+    line('replies', replies, '   summarising what Claude did'),
+    ...(earlier.calls > 0 ? [line('earlier', earlier, '   before the two were counted apart')] : []),
+    '',
+    `  ${total.quota.toFixed(1)}% of the 5h window in all. Dollars are Haiku's API list price, for scale:`,
+    '  a subscription pays in that window, not in dollars.',
+    '',
+    doReplies
+      ? '  Replies cost more because they read Claude\'s output. `/timeline replies off`\n  stops them — nothing is spent reading output, and prompts are still summarised.'
+      : '  Replies are off: nothing is spent reading Claude\'s output. `/timeline replies on` brings them back.',
+  ].join('\n')
 }
 
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
@@ -543,7 +584,7 @@ function batchPrompt(rows: Row[], language: string): string {
   ].join('\n')
 }
 
-export const VERBS = ['help', 'fill', 'lang', 'replies', 'close'] as const
+export const VERBS = ['help', 'fill', 'cost', 'lang', 'replies', 'close'] as const
 
 function distance(a: string, b: string): number {
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
@@ -724,7 +765,9 @@ async function runFill(
   const before = quotaOf(await $.session.usage())
   try {
     let written = 0
-    const usages: ({ input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined)[] = []
+    type Usage = { input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined
+    const askUsages: Usage[] = []
+    const replyUsages: Usage[] = []
 
     // One call writing a hundred lines made a first open wait for the last
     // line before showing the first. The backlog goes out in chunks, a few at
@@ -760,7 +803,7 @@ async function runFill(
 
         return
       }
-      usages.push(reply.usage)
+      askUsages.push(reply.usage)
       const parsed = parseAsks(reply.text)
       for (const row of chunk) {
         const got = parsed[row.n]
@@ -795,7 +838,7 @@ async function runFill(
 
         return
       }
-      usages.push(reply.usage)
+      replyUsages.push(reply.usage)
       const parsed = parseFill(reply.text)
       for (const row of chunk) {
         const got = parsed[row.n]
@@ -815,11 +858,23 @@ async function runFill(
     await $.store.set(storeKey, summaries)
     cache = null
 
-    const used = usages.reduce((n, u) => n + (u === undefined ? 0 : u.cache_read_input_tokens + u.input_tokens), 0)
-    const out = usages.reduce((n, u) => n + (u?.output_tokens ?? 0), 0)
-    spent.calls += usages.length
-    spent.input += used
-    spent.out += out
+    const sum = (usages: Usage[]): Side => ({
+      calls: usages.length,
+      input: usages.reduce((n, u) => n + (u === undefined ? 0 : u.cache_read_input_tokens + u.input_tokens), 0),
+      out: usages.reduce((n, u) => n + (u?.output_tokens ?? 0), 0),
+    })
+    const add = (to: Side, by: Side): Side => ({ calls: to.calls + by.calls, input: to.input + by.input, out: to.out + by.out })
+    const none: Side = { calls: 0, input: 0, out: 0 }
+    const askSide = sum(askUsages)
+    const replySide = sum(replyUsages)
+    const used = askSide.input + replySide.input
+    const out = askSide.out + replySide.out
+    spent = {
+      ...add(spent, add(askSide, replySide)),
+      quota: spent.quota,
+      asks: add(spent.asks ?? none, askSide),
+      replies: add(spent.replies ?? none, replySide),
+    }
     // The quota windows move in tenths of a percent, so the difference across
     // the call is what this summary actually took out of the subscription.
     const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
@@ -845,8 +900,9 @@ async function runFill(
 
 let sessionKey: string | null = null
 
-// The theme has no warm fill of its own, so the marked card takes a tint of
-// the accent picked by theme name; any other theme keeps the theme's own key.
+// The pane sits on a grey of the theme's, so the marked card takes the
+// terminal's own ground — white on a light theme, black on a dark one — and
+// reads as lifted off the pane. Any other theme keeps the theme's own key.
 let tint = 'userMessageBackground'
 let isTinted = false
 
@@ -859,8 +915,8 @@ export function tintOf(theme: string, colorfgbg: string | undefined): string {
     mode = !Number.isInteger(bg) || bg < 0 || bg > 15 ? '' : bg <= 6 || bg === 8 ? 'dark' : 'light'
   }
   if (mode.includes('ansi')) return 'userMessageBackground'
-  if (mode.startsWith('light')) return 'rgb(252,236,226)'
-  if (mode.startsWith('dark')) return 'rgb(66,46,38)'
+  if (mode.startsWith('light')) return 'rgb(255,255,255)'
+  if (mode.startsWith('dark')) return 'rgb(0,0,0)'
   return 'userMessageBackground'
 }
 
@@ -970,7 +1026,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
-      description: 'What this session did — `fill`, `lang`, `replies on|off`, `close`',
+      description: 'What this session did — `fill`, `cost`, `lang`, `replies on|off`, `close`',
     })
 
     return next(e)
@@ -989,6 +1045,7 @@ export const register: Register = (on, options) => {
           '',
           '  /timeline                 open the pane (or print it where none can be drawn)',
           '  /timeline fill            summarise everything missing now',
+          '  /timeline cost            what the summaries took: prompts, replies, share of the 5h window',
           '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
           '  /timeline replies on|off  write the reply side, or only the ask',
           '  /timeline close',
@@ -1067,6 +1124,12 @@ export const register: Register = (on, options) => {
     }
     const rows = rowsCached(messages)
     const storeKey = await loadStore($, language)
+
+    if (verb === 'cost') {
+      await loadStore($, language)
+
+      return { text: costText(spent, doReplies) }
+    }
 
     if (verb === 'fill') {
       const line = await runFill($, rows, storeKey, language, messages.length, doReplies, true)
