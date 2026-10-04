@@ -951,10 +951,26 @@ async function loadStore($: EngineInterface, language: string): Promise<string> 
     if (was !== language) {
       await $.store.set(`${storeKey}:language`, language)
     }
+    // A prompt's row is only known once it has been drawn, and a reload or a
+    // resume forgets which were: a card whose turn ran no tool then had
+    // nothing to jump to and was not a button at all.
+    const ids = ((await $.store.get(`${storeKey}:ids`)) as Record<string, string> | undefined) ?? {}
+    for (const [key, id] of Object.entries(ids)) {
+      if (!askIds.has(key)) {
+        askIds.set(key, id)
+      }
+    }
     loaded = true
   }
 
   return storeKey
+}
+
+/** Written from the turn hooks, never from a draw. */
+function saveIds($: EngineInterface): void {
+  if (sessionKey !== null && askIds.size > 0) {
+    void $.store.set(`${sessionKey}:ids`, Object.fromEntries(askIds))
+  }
 }
 
 export const register: Register = (on, options) => {
@@ -981,6 +997,7 @@ export const register: Register = (on, options) => {
     cache = null
     // The theme may have changed since the last turn; read it again.
     isTinted = false
+    saveIds($)
     $.ui.invalidate('ui.render')
 
     return next(e)
@@ -988,6 +1005,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', ($, e, next) => {
     cache = null
+    saveIds($)
     $.ui.invalidate('ui.render')
 
     return next(e)
@@ -1208,11 +1226,24 @@ export const register: Register = (on, options) => {
       void runFill($, rows, storeKey, language, size, doReplies)
     }
 
+    // For each row, the last tool call of the rows before it: one pass.
+    let lastTool: string | undefined
+    const above = rows.map(r => {
+      const before = lastTool
+      lastTool = r.toolIds.at(-1) ?? lastTool
+
+      return before
+    })
+
     return (
       <Box flexDirection="column" paddingRight={1}>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
-          const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
+          // Its own prompt, else its first tool call, else the last tool call
+          // before it — the nearest row above that the transcript can find.
+          const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60))
+            ?? row.anchor
+            ?? above[row.n - 1]
           const summary = summaries[row.key]
           const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}`
           const title = summary?.ask ?? row.ask
