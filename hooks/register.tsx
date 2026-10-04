@@ -210,6 +210,9 @@ let loaded = false
 // nobody is looking at. Turns arrive one per prompt, already spaced, so each is
 // filled as it lands — there is no burst to debounce.
 let filling = false
+// Only a turn that is running can still produce a reply. Without this the
+// newest row said `waiting…` after a slash command, which never gets one.
+let isRunning = false
 /** Rows per summarising call, so a reply never runs past its own cap. */
 const BATCH = 25
 /**
@@ -958,6 +961,7 @@ export const register: Register = (on, options) => {
   // turn.complete — so a new row sat showing its raw text for the whole turn.
   on('turn.start', ($, e, next) => {
     cache = null
+    isRunning = true
     saveIds($)
     $.ui.invalidate('ui.render')
 
@@ -966,6 +970,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', ($, e, next) => {
     cache = null
+    isRunning = false
     saveIds($)
     $.ui.invalidate('ui.render')
 
@@ -1216,7 +1221,7 @@ export const register: Register = (on, options) => {
           // the tally and the errors all go, though what is stored is kept.
           const did = !doReplies
             ? null
-            : summary?.did || (summary !== undefined ? pendingOf(row, row.n === rows.length, filling) : null)
+            : summary?.did || (summary !== undefined ? pendingOf(row, isRunning && row.n === rows.length, filling) : null)
 
           return (
             <Box
@@ -1244,7 +1249,7 @@ export const register: Register = (on, options) => {
                   </Text>
                 </Box>
                 {id === undefined ? (
-                  <Text wrap="truncate-end" dimColor={row.isInjected}>{askText}</Text>
+                  <Text wrap="truncate-end" color="text" dimColor={row.isInjected}>{askText}</Text>
                 ) : (
                   <Button
                     plain
@@ -1262,12 +1267,15 @@ export const register: Register = (on, options) => {
                 // upgraded when the reply exists. A bare arrow reads as broken,
                 // so a row still waiting says which wait it is in: a call is
                 // running, or there is nothing to run it on yet.
-                <Text wrap="wrap" dimColor={!summary?.did || row.isInjected}>
+                // The theme's text colour, not the terminal's: when the two
+                // disagree (a light theme on a dark terminal) the terminal's
+                // foreground vanishes into the pane's ground.
+                <Text wrap="wrap" color="text" dimColor={!summary?.did || row.isInjected}>
                   {'  → '}
                   {did}
                 </Text>
               )}
-              {doReplies && row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
+              {doReplies && row.facts.length > 0 && <Text color="text" dimColor>{'  '}{row.facts.join(' · ')}</Text>}
               {(doReplies ? row.errors : []).slice(0, 2).map((err, i) => (
                 <Text key={`t${row.n}e${i}`} color="error" wrap="wrap">
                   {'  ⚠ '}
