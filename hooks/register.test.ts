@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { rowsOf, verbOf } from './register'
+import { parseFill, rowsOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -57,13 +57,13 @@ test('rowsOf opens a row per sent message and attributes the work after it', () 
 
   expect(rows.length).toBe(2)
   expect(rows[0].isInjected).toBe(false)
-  expect(rows[0].details).toEqual([
-    '1 file(s): results.json',
-    '2 command(s): python train.py, cat',
+  expect(rows[0].facts).toEqual([
+    '1 file: results.json',
+    '2 cmd: python train.py, cat',
   ])
   // An injected turn still opens a row, and reads differently.
   expect(rows[1].isInjected).toBe(true)
-  expect(rows[1].details).toEqual([])
+  expect(rows[1].facts).toEqual([])
 })
 
 // The jump target is the turn's first tool row: its tool_use_id IS the row's
@@ -80,3 +80,19 @@ test('rowsOf anchors a row to its first tool call', () => {
   expect(rows[1].anchor).toBe(undefined)
 })
 
+
+// The fork is told to answer `<number>|<line>` and nothing else, but a model
+// adds a preamble often enough that the parser has to simply ignore one.
+test('parseFill keeps the numbered lines and drops everything else', () => {
+  const parsed = parseFill([
+    "Here's the summary:",
+    '',
+    '3|Wrote worklog.py and ran it over the 72MB research session',
+    '  7 | Fixed verbOf: every tally had read cd×N',
+    '## not a turn',
+    '12|Gave up on the mount test — the scaffolding outgrew the code',
+  ].join('\n'))
+
+  expect(Object.keys(parsed)).toEqual(['3', '7', '12'])
+  expect(parsed[7]).toBe('Fixed verbOf: every tally had read cd×N')
+})
