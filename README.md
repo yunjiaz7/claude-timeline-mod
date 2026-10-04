@@ -115,6 +115,20 @@ What the model writes sits beside what the transcript recorded, never instead
 of it: the command tally stays, and an error is printed as the tool reported
 it. A summary of a failure reads "addressed the issue" far too easily.
 
+## Turning the reply side off
+
+```
+/timeline replies off
+/timeline replies on
+/timeline replies          # what it is now
+```
+
+or the `Summarise replies` row in `/config`. With it off a row keeps its ask
+summary and its tally of files and commands, and nothing is called for the
+reply side: the list of rows to upgrade is built empty, so the loop that would
+call the model has nothing to iterate. Rows already written are kept, and
+turning it back on fills in what is missing.
+
 ## Language
 
 ```

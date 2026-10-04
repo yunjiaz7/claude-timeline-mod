@@ -16,6 +16,12 @@
       ],
       "default": "中文",
       "title": "Summary language"
+    },
+    "replySummaries": {
+      "type": "boolean",
+      "title": "Summarise replies",
+      "description": "Write what each turn did. Off: only your ask is summarised, and no call is made for the reply.",
+      "default": true
     }
   }
 }

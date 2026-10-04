@@ -352,12 +352,12 @@ function quotaOf(usage: { rateLimits: readonly { kind: string; percentUsed: numb
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
 /** The same rows as text, for a surface that draws no pane. */
-function asText(rows: Row[], store: Record<string, Summary>): string {
+function asText(rows: Row[], store: Record<string, Summary>, doReplies: boolean): string {
   return rows
     .map(r => {
       const summary = store[r.key]
       const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
-      if (summary !== undefined) {
+      if (summary !== undefined && (summary.did !== '' || doReplies)) {
         lines.push(`      → ${summary.did === '' ? 'waiting…' : summary.did}`)
       }
       if (r.facts.length > 0) {
@@ -382,6 +382,7 @@ async function runFill(
   storeKey: string,
   language: string,
   size: number,
+  doReplies: boolean,
   /** A fill you asked for retries whatever an automatic one gave up on. */
   isForced = false,
 ): Promise<string> {
@@ -398,8 +399,12 @@ async function runFill(
   // one this pass should upgrade in the same run. Taking it before meant the
   // list was always empty on a first fill, and every row sat at `waiting…`
   // until something else happened to trigger another.
+  // With replies off this is always empty, so the loop below has nothing to
+  // iterate and `$.model.complete` is never reached for a reply.
   const upgradable = () =>
-    rows.filter(r => !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '')
+    doReplies
+      ? rows.filter(r => !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '')
+      : []
   if (asksOnly.length === 0 && upgradable().length === 0) {
     return ''
   }
@@ -537,6 +542,9 @@ async function loadStore($: EngineInterface, language: string): Promise<string> 
 
 export const register: Register = (on, options) => {
   const language = String(options.language ?? 'English')
+  // Off: the reply pass is never built and never called. The ask pass still
+  // runs, so a row still reads as a line rather than a raw prompt.
+  const doReplies = options.replySummaries !== false
 
   // A pane is drawn when the engine asks, and new messages are not an ask.
   // Without this the pane sits on whatever the last draw found.
@@ -568,7 +576,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
-      description: 'What this session did — `fill`, `print`, `lang <language>`, `close`',
+      description: 'What this session did — `fill`, `print`, `lang`, `replies on|off`, `close`',
     })
 
     return next(e)
@@ -605,6 +613,34 @@ export const register: Register = (on, options) => {
       return { text: `timeline: summaries will be written in ${picked} — open the pane to rewrite them.` }
     }
 
+    if (arg === 'replies' || arg.startsWith('replies ')) {
+      const want = arg.slice(7).trim().toLowerCase()
+      if (want === '') {
+        return {
+          text: `timeline: reply summaries are ${doReplies ? 'on' : 'off'}.`
+            + '\n  /timeline replies <on | off>'
+            + (doReplies ? '' : '\n  off: no call is made for the reply side at all.'),
+        }
+      }
+      if (want !== 'on' && want !== 'off') {
+        return { text: 'timeline: say `on` or `off`.' }
+      }
+      const wantOn = want === 'on'
+      if (wantOn === doReplies) {
+        return { text: `timeline: already ${want}.` }
+      }
+      const done = await $.config.set({ key: 'timeline.replySummaries', value: wantOn })
+      if ('deny' in done) {
+        return { text: `timeline: could not set it (${String(done.deny)})` }
+      }
+
+      return {
+        text: wantOn
+          ? 'timeline: reply summaries on — open the pane to fill them in.'
+          : 'timeline: reply summaries off. Nothing is called for them, and the rows you have are kept.',
+      }
+    }
+
     if (arg === 'close') {
       await $.ui.close({ id: PANE })
 
@@ -619,7 +655,7 @@ export const register: Register = (on, options) => {
     const storeKey = await loadStore($, language)
 
     if (arg === 'fill') {
-      const line = await runFill($, rows, storeKey, language, messages.length, true)
+      const line = await runFill($, rows, storeKey, language, messages.length, doReplies, true)
 
       return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}` }
     }
@@ -634,7 +670,7 @@ export const register: Register = (on, options) => {
       if (opened.isPlaced) {
         // Opening it is the signal that someone wants to read it: catch up on
         // whatever accumulated while it was closed.
-        const line = await runFill($, rows, storeKey, language, messages.length)
+        const line = await runFill($, rows, storeKey, language, messages.length, doReplies)
 
         return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
       }
@@ -643,11 +679,11 @@ export const register: Register = (on, options) => {
       // seats none. Say which, and print it rather than report a pane nobody
       // can see.
       return {
-        text: `timeline: this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries)}`,
+        text: `timeline: this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries, doReplies)}`,
       }
     }
 
-    return { text: `timeline · ${rows.length} turns\n\n${asText(rows, summaries)}` }
+    return { text: `timeline · ${rows.length} turns\n\n${asText(rows, summaries, doReplies)}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -668,7 +704,7 @@ export const register: Register = (on, options) => {
     // at all meant a half-written row never asked for its other half.
     const unsummarised = rows.filter(
       r => summaries[r.key] === undefined
-        || (summaries[r.key]?.did === '' && r.body.trim() !== ''),
+        || (doReplies && summaries[r.key]?.did === '' && r.body.trim() !== ''),
     ).length
 
     // Drawing the pane is the signal that someone is reading it, and the only
@@ -677,7 +713,7 @@ export const register: Register = (on, options) => {
     // summaries land on the redraw its own invalidate causes. `filling` and
     // the missing count bound it — once nothing is missing, no call runs.
     if (unsummarised > 0 && !filling) {
-      void runFill($, rows, storeKey, language, messages.length).then(line => {
+      void runFill($, rows, storeKey, language, messages.length, doReplies).then(line => {
         if (line !== '') {
           $.ui.log(`timeline: ${line}`)
         }
@@ -721,7 +757,7 @@ export const register: Register = (on, options) => {
                   }}
                 />
               )}
-              {summary !== undefined && (
+              {summary !== undefined && (summary.did !== '' || doReplies) && (
                 // An ask-only row is written the moment the prompt lands and
                 // upgraded when the reply exists. A bare arrow reads as broken,
                 // so a row still waiting says which wait it is in: a call is
