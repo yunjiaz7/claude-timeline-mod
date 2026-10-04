@@ -48,47 +48,84 @@ const askIds = new Map<string, string>()
  * transcript.
  */
 const markedAtom = atom({ plugin: 'timeline', key: 'marked' } as const, null)
-/** Rows in the viewport, by their own render id, and the turn each belongs to. */
-const visible = new Map<string, number>()
+/**
+ * Rows in the viewport, by their own render id, each holding what it can be
+ * looked up by rather than a turn number. A row reports the moment it is
+ * drawn, which for the turn in flight is before the maps below have met it;
+ * resolving at report time dropped those rows for good and left the marker
+ * one turn behind. They are resolved each time the marker is computed instead.
+ */
+type Seen = { tool?: string; text?: string }
+const visible = new Map<string, Seen>()
+let lastId: string | null = null
 let markedN: number | null = null
 let turnOfTool = new Map<string, number>()
 let turnOfText = new Map<string, number>()
+let latestN = 0
 /** A viewport cannot span this many turns; anything further is a missed report. */
 const SPAN = 20
 
-function track($: EngineInterface, id: string, os: unknown, n: number | undefined): void {
-  if (n === undefined || os === undefined) {
+function turnOf(seen: Seen): number | undefined {
+  if (seen.tool !== undefined) {
+    // A tool id the maps have not met can only be newer than they are.
+    return turnOfTool.get(seen.tool) ?? (latestN > 0 ? latestN : undefined)
+  }
+
+  return seen.text === undefined ? undefined : turnOfText.get(seen.text)
+}
+
+function recompute($: EngineInterface): void {
+  const anchor = lastId === null ? undefined : visible.get(lastId)
+  const near = anchor === undefined ? undefined : turnOf(anchor)
+  let top: number | undefined
+  for (const [id, seen] of visible) {
+    const n = turnOf(seen)
+    if (n === undefined) {
+      continue
+    }
+    if (near !== undefined && Math.abs(n - near) > SPAN) {
+      visible.delete(id)
+      continue
+    }
+    if (top === undefined || n < top) {
+      top = n
+    }
+  }
+  if (top === undefined || top === markedN) {
+    return
+  }
+  const now = top
+  markedN = now
+  void update($, markedAtom, () => now)
+  // Keep the marked card inside the pane's own window as well.
+  void $.ui.scroll({ to: { key: `t${now}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
+}
+
+function track($: EngineInterface, id: string, os: unknown, seen: Seen): void {
+  if (os === undefined) {
     return
   }
   if (os === null) {
     visible.delete(id)
   } else {
-    visible.set(id, n)
-    for (const [k, v] of visible) {
-      if (Math.abs(v - n) > SPAN) {
-        visible.delete(k)
+    visible.set(id, seen)
+    lastId = id
+    if (visible.size > 200) {
+      const oldest = visible.keys().next().value
+      if (oldest !== undefined) {
+        visible.delete(oldest)
       }
     }
   }
-  if (visible.size === 0) {
-    return
-  }
-  const top = Math.min(...visible.values())
-  if (top !== markedN) {
-    markedN = top
-    void update($, markedAtom, () => top)
-    // Keep the marked card inside the pane's own window as well.
-    void $.ui.scroll({ to: { key: `t${top}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
-  }
+  recompute($)
 }
 
 function keyOf(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 60)
 }
 
-// Rows are derived from the whole transcript, which a pane redraws often. The
-// walk is linear in the session, so cache it and only redo it when the
-// transcript has grown.
+// Rows are derived from the whole transcript. The walk is linear in the
+// session, so it is cached and redone only when a turn or a fill changes it.
 let cache: { size: number; rows: Row[] } | null = null
 
 // Summaries, by anchor. Written once, read from the store on every load — a
@@ -345,6 +382,7 @@ function rowsCached(messages: readonly SessionMessage[]): Row[] {
     cache = { size: messages.length, rows: rowsOf(messages) }
     turnOfTool = new Map()
     turnOfText = new Map()
+    latestN = cache.rows.length
     for (const row of cache.rows) {
       turnOfText.set(keyOf(row.ask), row.n)
       for (const id of row.toolIds) {
@@ -726,26 +764,28 @@ export const register: Register = (on, options) => {
     }
     askIds.set(key, e.requestId)
 
-    track($, e.requestId, e.props.onScreen, turnOfText.get(key))
+    track($, e.requestId, e.props.onScreen, { text: key })
 
     return next(e)
   })
 
   on('ui.render', { component: 'AssistantMessage' }, ($, e, next) => {
-    track($, e.requestId, e.props.onScreen, turnOfText.get(keyOf(e.props.text)))
+    track($, e.requestId, e.props.onScreen, { text: keyOf(e.props.text) })
 
     return next(e)
   })
 
   on('ui.render', { component: 'ToolUse' }, ($, e, next) => {
-    track($, e.requestId, e.props.onScreen, turnOfTool.get(e.props.tool_use_id))
+    track($, e.requestId, e.props.onScreen, { tool: e.props.tool_use_id })
 
     return next(e)
   })
 
   on('ui.render', { component: 'ToolGroup' }, ($, e, next) => {
     const id = e.props.calls.find(c => c.tool_use_id !== undefined)?.tool_use_id
-    track($, e.requestId, e.props.onScreen, id === undefined ? undefined : turnOfTool.get(id))
+    if (id !== undefined) {
+      track($, e.requestId, e.props.onScreen, { tool: id })
+    }
 
     return next(e)
   })
@@ -885,12 +925,24 @@ export const register: Register = (on, options) => {
     // summaries, and a draw can be the first thing to run after one — so the
     // drawing loads them itself rather than trusting a command to have run.
     const storeKey = await loadStore($, language)
-    const messages = await $.session.messages()
-    if ('deny' in messages) {
-      return <Text dimColor>cannot read this session</Text>
+    // The transcript is fetched only when a turn or a fill has changed it. A
+    // redraw because the marker moved reuses the rows it already has, so
+    // scrolling does not pull the whole session across on every step.
+    let rows: Row[]
+    let size: number
+    if (cache === null) {
+      const messages = await $.session.messages()
+      if ('deny' in messages) {
+        return <Text dimColor>cannot read this session</Text>
+      }
+      rows = rowsCached(messages)
+      size = messages.length
+    } else {
+      rows = cache.rows
+      size = cache.size
     }
-
-    const rows = rowsCached(messages)
+    // The maps may just have caught up with rows that reported before them.
+    recompute($)
     const nowAt = await read($, markedAtom)
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
     // What is left to write, counting a row that has only its ask: the trigger
@@ -907,7 +959,7 @@ export const register: Register = (on, options) => {
     // summaries land on the redraw its own invalidate causes. `filling` and
     // the missing count bound it — once nothing is missing, no call runs.
     if (unsummarised > 0 && !filling) {
-      void runFill($, rows, storeKey, language, messages.length, doReplies).then(line => {
+      void runFill($, rows, storeKey, language, size, doReplies).then(line => {
         if (line !== '') {
           $.ui.log(`timeline: ${line}`)
         }

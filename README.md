@@ -87,16 +87,9 @@ anything else to happen.
 
 ## Summaries
 
-`fill` runs one `$.model.fork` — a completion over this session's own
-transcript, so the model reads what it actually did, not a description of it,
-and the API serves the prefix from cache. Every missing turn goes in that one
-call: the cached-prefix read is the expensive part, so amortizing it over all
-of them costs a fraction of one call per turn (~20x on a 150k-token session).
-Each turn gets both halves — what you asked and what it did — and results are
-stored per session and never recomputed. `fill` reports what the call cost:
-`120.4k cached + 1.1k fresh in, 0.6k out`. A `cache_read` smaller than the
-fresh input means the prefix had lapsed and that fork paid full price for the
-transcript.
+Each turn gets both halves — what you asked and what it did. Results are
+stored per session and never recomputed, and every fill reports what it took:
+seconds, tokens in and out, and the share of the five-hour window it moved.
 
 It fills itself from the draw: drawing the pane is the signal that someone is
 reading it, and the only one that holds across a reload, a reopen and a new
@@ -104,7 +97,7 @@ turn alike. The tree goes back immediately with the asks as written and the
 summaries land on the redraw the fill triggers, so nothing waits on a model.
 With the pane closed nothing is drawn and nothing is spent — a session can run all night unattended
 and cost nothing until you open the pane in the morning, which then summarises
-the whole night in one fork.
+the whole night in one pass.
 
 Every call is `$.model.complete` on Haiku, which carries no history and reads
 only what it is handed — the ask alone for a row with no summary yet, the turn
@@ -166,7 +159,11 @@ nothing for most of a session: under a long reply no ask is on screen at all.
 
 The engine reports only at the viewport's edges and only on a change, so this
 takes no timer and no polling. The marked turn lives in `$.state`, which
-redraws the pane alone when it changes. On a surface that does not report
+redraws the pane alone when it changes, and that redraw reuses the rows it
+already has rather than fetching the transcript again. A row reports as soon as
+it is drawn, which for the turn in flight is before the pane has met it, so
+rows are held by what they can be looked up by and resolved each time the
+marker is computed. On a surface that does not report
 `onScreen`, nothing is marked.
 
 ## Rows are derived
