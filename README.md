@@ -1,5 +1,14 @@
 # timeline
 
+```
+claude plugin marketplace add yunjiaz7/claude-timeline-mod
+claude plugin install timeline@claude-timeline-mod
+```
+
+Or point `CLAUDE_CODE_PLUGIN_DIRS` at a folder holding a clone, which is what
+to do while editing it.
+
+
 A Claude Code mod that reads a session as **what actually happened** — for each
 turn, the files touched, the commands run, the errors hit.
 
