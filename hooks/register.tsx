@@ -406,6 +406,14 @@ export function parseFind(text: string, max: number): number[] {
   return out.slice(0, 8)
 }
 
+function closeFind($: EngineInterface): void {
+  isFinding = false
+  query = ''
+  matches = null
+  findTop = 0
+  $.ui.invalidate('ui.render')
+}
+
 async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise<void> {
   query = wanted.trim()
   findTop = 0
@@ -1287,10 +1295,7 @@ export const register: Register = (on, options) => {
     if (verb === 'find') {
       // Bare, it is a switch: the box opens, and the same words close it.
       if (rest === '' && isFinding) {
-        isFinding = false
-        query = ''
-        matches = null
-        $.ui.invalidate('ui.render')
+        closeFind($)
 
         return { text: 'timeline: search closed' }
       }
@@ -1412,7 +1417,7 @@ export const register: Register = (on, options) => {
         ? 'Enter searches by meaning'
         : matches.length === 0
           ? `nothing matches "${head(query, 24)}"`
-          : `${matches.length} match${matches.length > 1 ? 'es' : ''}, best first`
+          : `${matches.length} match${matches.length > 1 ? 'es' : ''}, best first — click one to jump to it`
 
     return (
       <Box flexDirection="column" paddingRight={1}>
@@ -1434,10 +1439,25 @@ export const register: Register = (on, options) => {
             </Box>
             {/* The command that closes it is the one thing here to act on, so
                 it is the one thing in the accent. */}
-            <Box flexDirection="row" paddingX={2}>
-              <Text color="inactive">{status} · </Text>
+            <Box paddingX={2}>
+              <Text color="inactive">{status}</Text>
+            </Box>
+            {/* Ways out that need no typing: back to every card, or shut the
+                box. A primary Button is drawn in the accent, `[ so ]`. */}
+            <Box flexDirection="row" paddingX={2} gap={2}>
+              {matches !== null && (
+                <Button
+                  key="find-all"
+                  variant="primary"
+                  label="show all"
+                  onPress={() => {
+                    void runFind($, rows, '')
+                  }}
+                />
+              )}
+              <Button key="find-close" variant="primary" label="close" onPress={() => closeFind($)} />
+              <Text color="inactive">or</Text>
               <Text color="claude" bold>/timeline find</Text>
-              <Text color="inactive"> closes</Text>
             </Box>
           </Box>
         )}
