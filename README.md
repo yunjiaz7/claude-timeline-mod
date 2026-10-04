@@ -77,13 +77,23 @@ With the pane closed nothing is drawn and nothing is spent — a session can run
 and cost nothing until you open the pane in the morning, which then summarises
 the whole night in one fork.
 
-That shape is deliberate. A fork re-reads the whole cached prefix whatever it
-covers, so one fork per turn is the expensive form and is only worth paying
-while somebody is reading the result. Measured on a 414k-token session: one
-fork over 35 turns read 414.3k cached + 1.8k fresh and wrote 4.9k — about
-$0.34 on Opus 5 rates, against roughly $7 for the same 35 turns one fork at a
-time. The pane header carries the running total so the spend is never silent,
-and `/timeline fill` still forces a fill by hand.
+Which call it makes depends on how far behind it is, because the two cost
+very differently:
+
+- **One turn missing** — `$.model.complete` on Haiku, given that turn alone.
+  It carries no history, so it reads only what it is handed: a few thousand
+  tokens. This is the live case, and it is roughly forty times cheaper than
+  the alternative on a long session.
+- **Several missing** — one `$.model.fork`, which re-reads the whole cached
+  transcript once and writes every missing line from it. The prefix read is
+  what a fork costs and it does not shrink with the work, so it is worth
+  paying once across many turns and never once per turn. Measured over 35
+  turns on a 414k-token session: 414.3k cached + 1.8k fresh in, 4.9k out.
+
+Both report what they took: elapsed time, tokens, and the share of the
+five-hour window the call moved, which is what a subscription actually
+spends. The pane header carries the running total, and `/timeline fill`
+forces a fill by hand.
 
 What the model writes sits beside what the transcript recorded, never instead
 of it: the command tally stays, and an error is printed as the tool reported

@@ -23,7 +23,7 @@ let loaded = false
 // filled as it lands — there is no burst to debounce.
 let filling = false
 /** What this session's fills have cost, shown so the spend is never silent. */
-const spent = { forks: 0, cached: 0, fresh: 0, out: 0 }
+const spent = { calls: 0, input: 0, out: 0, quota: 0 }
 
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
 
@@ -128,6 +128,8 @@ type Row = {
   anchor?: string
   /** Stable key for the stored summary; turns are append-only, so `n` holds. */
   key: string
+  /** This turn alone, trimmed — what `complete` is given when only one is missing. */
+  body: string
 }
 
 /** One row per message you sent, holding what the turns after it actually did. */
@@ -186,9 +188,22 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
         isInjected: INJECTED.test(m.text),
         facts: [],
         errors: [],
+        body: '',
       })
     } else if (m.role === 'assistant') {
       uses = [...uses, ...m.toolUses]
+      const row = rows[rows.length - 1]
+      if (row !== undefined && row.body.length < 6000) {
+        // Enough of the turn to summarise it and no more: the reply, then each
+        // call by name with a short look at what it ran and whether it failed.
+        const calls = m.toolUses
+          .map(u => {
+            const arg = (u.input.command ?? u.input.file_path ?? u.input.pattern ?? '') as string
+            return `  [${u.tool}] ${String(arg).split('\n')[0]?.slice(0, 120) ?? ''}${u.isError === true ? ' → FAILED' : ''}`
+          })
+          .join('\n')
+        row.body += `${m.text.slice(0, 1500)}\n${calls}\n`
+      }
     }
   }
   close()
@@ -234,6 +249,24 @@ function fillPrompt(rows: Row[]): string {
   ].join('\n')
 }
 
+/** The single-turn prompt, for `complete`, which sees only what it is given. */
+function onePrompt(row: Row): string {
+  return [
+    'Below is one turn of a coding session: what the user asked, then what the',
+    'assistant replied and which tools it ran.',
+    '',
+    'Answer with one line and nothing else:',
+    `${row.n}|<the ask in up to 10 words>|<what the assistant did, up to 16 words, past tense>`,
+    '',
+    'Name the concrete thing: the file, the fix, the finding, the number. If the',
+    'turn failed or was abandoned, say so plainly — never smooth a failure into',
+    'an accomplishment.',
+    '',
+    `ASKED: ${head(row.ask, 400)}`,
+    `DID:\n${row.body.slice(0, 5000)}`,
+  ].join('\n')
+}
+
 export function parseFill(text: string): Record<number, { ask: string; did: string }> {
   const out: Record<number, { ask: string; did: string }> = {}
   for (const line of text.split('\n')) {
@@ -244,6 +277,10 @@ export function parseFill(text: string): Record<number, { ask: string; did: stri
   }
 
   return out
+}
+
+function quotaOf(usage: { rateLimits: readonly { kind: string; percentUsed: number }[] }): number {
+  return usage.rateLimits.find(r => r.kind === 'five_hour')?.percentUsed ?? 0
 }
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
@@ -280,8 +317,22 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
   }
   filling = true
   const startedAt = await $.clock.now()
+  const before = quotaOf(await $.session.usage())
   try {
-    const reply = await $.model.fork({ prompt: fillPrompt(missing) })
+    // One missing turn is given to `complete`, which carries no history: it
+    // reads that turn alone. A fork would re-read the whole transcript to
+    // write one line, and the prefix read is what a fork costs — about forty
+    // times this on a long session. Several missing turns go the other way:
+    // one fork amortizes that read across all of them.
+    const only = missing.length === 1 ? missing[0] : undefined
+    const reply = only === undefined
+      ? await $.model.fork({ prompt: fillPrompt(missing) })
+      : await $.model.complete({
+          model: 'haiku',
+          effort: 'low',
+          maxTokens: 200,
+          prompt: onePrompt(only),
+        })
     if (!reply.isAnswered) {
       return `could not summarise (${reply.reason})`
     }
@@ -299,31 +350,29 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
     cache = null
 
     const u = reply.usage
-    if (u !== undefined) {
-      spent.forks += 1
-      spent.cached += u.cache_read_input_tokens
-      spent.fresh += u.input_tokens
-      spent.out += u.output_tokens
-    }
+    const used = u === undefined ? 0 : u.cache_read_input_tokens + u.input_tokens
+    spent.calls += 1
+    spent.input += used
+    spent.out += u?.output_tokens ?? 0
+    // The quota windows move in tenths of a percent, so the difference across
+    // the call is what this summary actually took out of the subscription.
+    const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
+    spent.quota += quota
     $.ui.invalidate('ui.render')
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
+    const how = only === undefined ? 'fork' : 'haiku'
     if (u === undefined) {
-      return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s`
+      return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s (${how})`
     }
 
     // `cache_read` under the fresh input means the prefix had lapsed and this
     // fork paid full price for the whole transcript.
     const lapsed = u.cache_read_input_tokens < u.input_tokens
 
-    // The prefix read dominates and does not shrink with the work: one new
-    // turn re-reads the same transcript as thirty do. That is the number to
-    // watch, so it is per-turn as well as total.
-    const perTurn = (u.cache_read_input_tokens + u.input_tokens) / missing.length
-
-    return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s`
-      + ` · ${k(u.cache_read_input_tokens)} cached + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
-      + ` · ${k(Math.round(perTurn))} in/turn`
+    return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s (${how})`
+      + ` · ${k(used)} in, ${k(u.output_tokens)} out`
+      + ` · ${quota.toFixed(1)}% of the 5h window`
       + (lapsed ? '  ← prefix had lapsed, paid full price' : '')
   } finally {
     filling = false
@@ -416,7 +465,11 @@ export const register: Register = on => {
       // What it actually cost, measured. `cache_read` near zero means the
       // prefix had lapsed and this fork paid full price for the transcript.
       const u = reply.usage
-      const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+      function quotaOf(usage: { rateLimits: readonly { kind: string; percentUsed: number }[] }): number {
+  return usage.rateLimits.find(r => r.kind === 'five_hour')?.percentUsed ?? 0
+}
+
+const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
       const cost = u === undefined
         ? ''
         : `\n  ${k(u.cache_read_input_tokens)} cached + ${k(u.input_tokens)} fresh in, ${k(u.output_tokens)} out`
@@ -483,7 +536,9 @@ export const register: Register = on => {
         <Text dimColor>
           {rows.length} turns
           {unsummarised > 0 ? ` · ${unsummarised} to summarise` : ''}
-          {spent.forks > 0 ? ` · ${spent.forks} fork${spent.forks > 1 ? 's' : ''}, ${k(spent.cached + spent.fresh)} in / ${k(spent.out)} out` : ''}
+          {spent.calls > 0
+            ? ` · summaries cost ${spent.quota.toFixed(1)}% of 5h · ${k(spent.input)} in / ${k(spent.out)} out over ${spent.calls} call${spent.calls > 1 ? 's' : ''}`
+            : ''}
         </Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
