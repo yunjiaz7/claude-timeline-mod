@@ -801,15 +801,25 @@ let sessionKey: string | null = null
 let tint = 'userMessageBackground'
 let isTinted = false
 
+// `auto` does not say which way it resolved. The terminal's COLORFGBG does
+// ("fg;bg", the engine's own fallback rule); without it the theme's key stays.
+export function tintOf(theme: string, colorfgbg: string | undefined): string {
+  let mode = theme
+  if (theme === 'auto') {
+    const bg = Number(colorfgbg?.split(';').at(-1) || NaN)
+    mode = !Number.isInteger(bg) || bg < 0 || bg > 15 ? '' : bg <= 6 || bg === 8 ? 'dark' : 'light'
+  }
+  if (mode.includes('ansi')) return 'userMessageBackground'
+  if (mode.startsWith('light')) return 'rgb(252,236,226)'
+  if (mode.startsWith('dark')) return 'rgb(66,46,38)'
+  return 'userMessageBackground'
+}
+
 async function loadTint($: EngineInterface): Promise<void> {
   if (isTinted) return
   isTinted = true
   const theme = String((await $.config.list()).find(row => row.key === 'theme')?.value ?? '')
-  // `auto` does not say which way it resolved, so it keeps the theme's key.
-  tint = theme.includes('ansi') ? 'userMessageBackground'
-    : theme.startsWith('light') ? 'rgb(252,236,226)'
-    : theme.startsWith('dark') ? 'rgb(66,46,38)'
-    : 'userMessageBackground'
+  tint = tintOf(theme, await $.env.get('COLORFGBG'))
 }
 
 async function loadStore($: EngineInterface, language: string): Promise<string> {

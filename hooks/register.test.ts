@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, parseAsks, parseFill, resolveLanguage, resolveVerb, rowsOf, verbOf } from './register'
+import { cells, parseAsks, parseFill, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -134,4 +134,13 @@ test('resolveLanguage takes a name, a code, or a prefix', () => {
   expect(resolveLanguage('中文')).toBe('中文')
   expect(resolveLanguage('esp')).toBe('Español')
   expect(resolveLanguage('klingon')).toBe(null)
+})
+
+test('tintOf follows the theme, and the terminal background under auto', () => {
+  expect(tintOf('light', undefined)).toBe('rgb(252,236,226)')
+  expect(tintOf('dark', '0;15')).toBe('rgb(66,46,38)')
+  expect(tintOf('auto', '0;15')).toBe('rgb(252,236,226)')
+  expect(tintOf('auto', '15;0')).toBe('rgb(66,46,38)')
+  expect(tintOf('auto', undefined)).toBe('userMessageBackground')
+  expect(tintOf('light-ansi', undefined)).toBe('userMessageBackground')
 })
