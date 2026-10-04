@@ -60,6 +60,10 @@ claude plugin test .
 
 With hot reloading on, an edit lands on the next turn.
 
+A tree that does not validate is refused at render time, not by `validate`, and
+the pane goes blank. The engine says why on a dim transcript line
+(`timeline: ui.render hook skipped: …`) — read that before guessing.
+
 ## Status
 
 v0. Deliberately absent: model-written titles per segment, a live pane,

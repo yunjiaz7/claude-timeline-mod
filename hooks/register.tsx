@@ -235,16 +235,7 @@ export const register: Register = on => {
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
-          // One accent, everything else grayscale, red kept for failure alone.
-          // An unattended turn recedes entirely: it is background until it breaks.
-          const label = (
-            <Text wrap="wrap">
-              <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
-                {row.isInjected ? '⏱' : '❯'} {row.n}
-              </Text>
-              <Text dimColor={row.isInjected}>{'  '}{head(row.ask, width)}</Text>
-            </Text>
-          )
+          const ask = head(row.ask, width)
 
           return (
             <Box
@@ -256,17 +247,26 @@ export const register: Register = on => {
               borderColor="promptBorder"
               borderDimColor
             >
-              {id === undefined ? label : (
-                <Button
-                  plain
-                  key={`j${row.n}`}
-                  onPress={() => {
-                    void $.ui.scroll({ to: { requestId: id }, block: 'start' })
-                  }}
-                >
-                  {label}
-                </Button>
-              )}
+              {/* One accent, everything else grayscale. A Button takes a plain
+                  string, so the accented number sits beside it, not inside. */}
+              <Box flexDirection="row">
+                <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
+                  {row.isInjected ? '⏱' : '❯'} {row.n}{' '}
+                </Text>
+                {id === undefined ? (
+                  <Text dimColor={row.isInjected} wrap="truncate-end">{ask}</Text>
+                ) : (
+                  <Button
+                    plain
+                    key={`j${row.n}`}
+                    label={ask}
+                    dimColor={row.isInjected}
+                    onPress={() => {
+                      void $.ui.scroll({ to: { requestId: id }, block: 'start' })
+                    }}
+                  />
+                )}
+              </Box>
               {row.details.map((d, i) => (
                 <Text
                   key={`t${row.n}d${i}`}
