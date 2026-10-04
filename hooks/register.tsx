@@ -50,11 +50,37 @@ const askIds = new Map<string, string>()
  * resolving at report time dropped those rows for good and left the marker
  * one turn behind. They are resolved each time the marker is computed instead.
  */
-type Seen = { tool?: string; text?: string; at: number }
+type Seen = { tool?: string; text?: string; isAsk?: boolean; at: number }
 const visible = new Map<string, Seen>()
 let markedN: number | null = null
 let turnOfTool = new Map<string, number>()
 let turnOfText = new Map<string, number>()
+/** Texts more than one turn carries, with the turns that carry each. */
+let sharedKeys = new Map<string, number[]>()
+/** The summary key of each turn, by number. */
+let keyByN: string[] = []
+/**
+ * Where a duplicate ask's own row is, by its summary key. Its text names
+ * several turns; the rows reporting in the same burst say which of them it is.
+ */
+const askIdByKey = new Map<string, string>()
+
+/** Of `candidates`, the turn nearest the middle of `around`, or undefined with no evidence. */
+export function nearest(candidates: readonly number[], around: readonly number[]): number | undefined {
+  if (around.length === 0) {
+    return undefined
+  }
+  const sorted = [...around].sort((a, b) => a - b)
+  const mid = sorted[Math.floor(sorted.length / 2)]!
+  let best: number | undefined
+  for (const n of candidates) {
+    if (best === undefined || Math.abs(n - mid) < Math.abs(best - mid)) {
+      best = n
+    }
+  }
+
+  return best
+}
 let latestN = 0
 /**
  * How long a report stays evidence, measured back from the newest one. A fast
@@ -84,16 +110,36 @@ function recompute(): void {
   }
   let top: number | undefined
   let atEnd = false
+  const known: number[] = []
+  const unsure: [string, Seen][] = []
   for (const [id, seen] of visible) {
     if (seen.at < latest - FRESH_MS) {
       visible.delete(id)
       continue
     }
     const n = turnOf(seen)
+    if (n !== undefined) {
+      known.push(n)
+    } else if (seen.text !== undefined && sharedKeys.has(seen.text)) {
+      unsure.push([id, seen])
+    }
+  }
+  for (const [id, seen] of unsure) {
+    const n = nearest(sharedKeys.get(seen.text!)!, known)
+    if (n === undefined) {
+      continue
+    }
+    known.push(n)
+    const key = keyByN[n - 1]
+    if (seen.isAsk && key !== undefined) {
+      askIdByKey.set(key, id)
+    }
+  }
+  for (const n of known) {
     if (n === latestN) {
       atEnd = true
     }
-    if (n !== undefined && (top === undefined || n < top)) {
+    if (top === undefined || n < top) {
       top = n
     }
   }
@@ -109,7 +155,7 @@ function recompute(): void {
   markedN = top
 }
 
-function track($: EngineInterface, id: string, os: unknown, by: { tool?: string; text?: string }): void {
+function track($: EngineInterface, id: string, os: unknown, by: { tool?: string; text?: string; isAsk?: boolean }): void {
   if (os === undefined) {
     return
   }
@@ -201,13 +247,40 @@ function loop($: EngineInterface): void {
   }
 }
 
-function keyOf(text: string): string {
+export function keyOf(text: string): string {
+  // Called on every report of a message row, so a long paste is cut before it
+  // is normalised; the full text is used only when its head is mostly space.
+  const key = text.slice(0, 600).replace(/\s+/g, ' ').trim().slice(0, 61)
+  if (key.length > 60 || text.length <= 600) {
+    return key.slice(0, 60)
+  }
+
   return text.replace(/\s+/g, ' ').trim().slice(0, 60)
 }
 
 // Rows are derived from the whole transcript. The walk is linear in the
 // session, so it is cached and redone only when a turn or a fill changes it.
-let cache: { size: number; rows: Row[] } | null = null
+let cache: { tail: string; rows: Row[] } | null = null
+
+/**
+ * What the transcript looks like at its two ends. The session hands over at
+ * most its newest 4096 messages, so past that the count stops changing while
+ * the transcript still grows: a gate on the count stopped every fill for good.
+ * Both ends move as the window slides; a false "changed" costs a no-op fill.
+ */
+export function tailOf(messages: readonly SessionMessage[]): string {
+  const first = messages[0]
+  const last = messages[messages.length - 1]
+
+  return [
+    messages.length,
+    first?.text.length ?? 0,
+    last?.role ?? '',
+    last?.text.length ?? 0,
+    last?.toolUses.length ?? 0,
+    last?.toolUses.at(-1)?.tool_use_id ?? '',
+  ].join('|')
+}
 
 // Summaries, by anchor. Written once, read from the store on every load — a
 // summarising is the paid part of this mod, and nothing is recomputed.
@@ -232,6 +305,9 @@ const BATCH = 25
  */
 const tries = new Map<string, number>()
 const GIVE_UP_AFTER = 3
+/** Calls that failed in a row; automatic fills stop at the max until a turn starts. */
+let callFailures = 0
+const CALL_FAILURES_MAX = 3
 
 function isSpent(key: string): boolean {
   return (tries.get(key) ?? 0) >= GIVE_UP_AFTER
@@ -245,7 +321,7 @@ function missed(key: string): void {
  * most change nothing, so a fill that failed must not be retried until there is
  * something new to try it on, rather than on every redraw.
  */
-let triedAt = -1
+let triedAt = ''
 type Side = { calls: number; input: number; out: number }
 // `asks` and `replies` came later than the totals: a session summarised before
 // them has totals larger than the two sides, and the rest is shown as earlier.
@@ -448,7 +524,12 @@ export function fitTop(rowsOf: readonly number[], top: number, at: number, room:
  * matches on meaning, which is the point — a summary rarely holds the word
  * the person remembers.
  */
+/** About 100k tokens of turns: past that each excerpt is cut to fit. */
+const FIND_BUDGET = 300_000
+
 function findPrompt(rows: Row[], store: Record<string, Summary>, wanted: string): string {
+  // A normal session fits as it is; only a very long one has its excerpts cut.
+  const each = Math.max(40, Math.min(200, Math.floor(FIND_BUDGET / Math.max(1, rows.length)) - 80))
   return [
     'Below are the turns of a coding session, one per line: its number, what',
     'the user asked, and what the assistant did.',
@@ -465,7 +546,7 @@ function findPrompt(rows: Row[], store: Record<string, Summary>, wanted: string)
       const summary = store[r.key]
       const did = summary?.did ? ` => ${summary.did}` : ''
 
-      return `${r.n}. ${summary?.ask ?? ''} | ${excerpt(r.ask, 80, 120)}${did}`
+      return `${r.n}. ${summary?.ask ?? ''} | ${excerpt(r.ask, Math.ceil(each * 0.4), Math.floor(each * 0.6))}${did}`
     }),
   ].join('\n')
 }
@@ -491,6 +572,8 @@ function closeFind($: EngineInterface): void {
   $.ui.invalidate('ui.render')
 }
 
+let findAbort: AbortController | null = null
+
 async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise<void> {
   query = wanted.trim()
   findTop = 0
@@ -500,6 +583,11 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
 
     return
   }
+  // The latest search wins: an earlier one still running is cut off, so its
+  // answer cannot land over the newer one.
+  findAbort?.abort()
+  const abort = new AbortController()
+  findAbort = abort
   isSearching = true
   $.ui.invalidate('ui.render')
   try {
@@ -508,7 +596,10 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
       effort: 'low',
       maxTokens: 100,
       prompt: findPrompt(rows, summaries, query),
-    })
+    }, { signal: abort.signal })
+    if (findAbort !== abort) {
+      return
+    }
     matches = reply.isAnswered ? parseFind(reply.text, rows.length) : []
     if (reply.isAnswered && reply.usage !== undefined && sessionKey !== null) {
       const by: Side = {
@@ -524,11 +615,14 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
         out: spent.out + by.out,
         finds: { calls: was.calls + 1, input: was.input + by.input, out: was.out + by.out },
       }
-      await $.store.set(`${sessionKey}:spent`, spent)
+      await put($, `${sessionKey}:spent`, spent)
     }
   } finally {
-    isSearching = false
-    $.ui.invalidate('ui.render')
+    if (findAbort === abort) {
+      findAbort = null
+      isSearching = false
+      $.ui.invalidate('ui.render')
+    }
   }
 }
 
@@ -541,7 +635,8 @@ function pad(text: string, n: number): string {
  * `text` as lines of at most `n` cells, broken at a space where the line has
  * one late enough and mid-word otherwise (CJK has no spaces to break at).
  */
-export function wrapCells(text: string, n: number): string[] {
+export function wrapCells(raw: string, n: number): string[] {
+  const text = clean(raw)
   const lines: string[] = []
   let line = ''
   let used = 0
@@ -572,9 +667,18 @@ export function wrapCells(text: string, n: number): string[] {
   return lines
 }
 
+// Colour codes and other control characters, which tool output carries (a
+// failing command's red error text) and the engine refuses in a tree: one
+// such string made it draw none of the pane.
+const CONTROL = /\x1b\[[0-9;?]*[ -\/]*[@-~]|[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
+
+export function clean(text: string): string {
+  return text.replace(CONTROL, '')
+}
+
 /** Flatten to one line and cut it to `n` terminal cells, not `n` characters. */
 function head(text: string, n: number): string {
-  const flat = text.replace(/<[^>]+>/g, ' ').split(/\s+/).join(' ').trim()
+  const flat = clean(text).replace(/<[^>]+>/g, ' ').split(/\s+/).join(' ').trim()
   if (cells(flat) <= n) {
     return flat
   }
@@ -628,8 +732,12 @@ type Row = {
   errors: string[]
   /** The first tool row of this turn, whose requestId is its tool_use_id. */
   anchor?: string
-  /** Stable key for the stored summary; turns are append-only, so `n` holds. */
+  /** The stored summary's key: what the turn says, and which of its kind it is. */
   key: string
+  /** The ask's first words, normalised: what its message row is known by. */
+  said: string
+  /** The ask on one line, cut long: a title before the summary lands. */
+  flat: string
   /** Every tool call of the turn, and the opening of each reply block. */
   toolIds: string[]
   replyKeys: string[]
@@ -700,6 +808,8 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
       rows.push({
         n: rows.length + 1,
         key: `${said}#${nth}`,
+        said,
+        flat: excerpt(m.text.slice(0, 2000), 600, 0),
         ask: m.text,
         isInjected: INJECTED.test(m.text),
         facts: [],
@@ -736,22 +846,43 @@ export function rowsOf(messages: readonly SessionMessage[]): Row[] {
 }
 
 function rowsCached(messages: readonly SessionMessage[]): Row[] {
-  if (cache === null || cache.size !== messages.length) {
+  const tail = tailOf(messages)
+  if (cache === null || cache.tail !== tail) {
     // Every turn, including the ones that only talked: a trajectory with gaps
     // in its numbering is not a trajectory, and a turn that decided something
     // without touching a file is often the one that mattered.
-    cache = { size: messages.length, rows: rowsOf(messages) }
+    cache = { tail, rows: rowsOf(messages) }
     turnOfTool = new Map()
     turnOfText = new Map()
+    sharedKeys = new Map()
+    keyByN = cache.rows.map(r => r.key)
     latestN = cache.rows.length
+    // A text two turns share ("continue", "Done.") cannot say which turn is on
+    // screen, nor where a click should land; it is left out of both, and the
+    // tool calls reported in the same burst decide instead.
+    const claim = (k: string, n: number) => {
+      const had = turnOfText.get(k)
+      const shared = sharedKeys.get(k)
+      if (shared !== undefined) {
+        if (!shared.includes(n)) {
+          shared.push(n)
+        }
+      } else if (had !== undefined && had !== n) {
+        sharedKeys.set(k, [had, n])
+      }
+      turnOfText.set(k, n)
+    }
     for (const row of cache.rows) {
-      turnOfText.set(keyOf(row.ask), row.n)
+      claim(row.said, row.n)
       for (const id of row.toolIds) {
         turnOfTool.set(id, row.n)
       }
       for (const k of row.replyKeys) {
-        turnOfText.set(k, row.n)
+        claim(k, row.n)
       }
+    }
+    for (const k of sharedKeys.keys()) {
+      turnOfText.delete(k)
     }
   }
 
@@ -920,11 +1051,11 @@ function asText(rows: Row[], store: Record<string, Summary>, doReplies: boolean)
   return rows
     .map(r => {
       const summary = store[r.key]
-      const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
+      const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.flat, 68)}`]
       if (!doReplies) {
         return lines.join('\n')
       }
-      const did = summary?.did || (summary !== undefined ? pendingOf(r, r.n === rows.length, false) : null)
+      const did = summary?.did || (summary !== undefined ? pendingOf(r, isRunning && r.n === rows.length, false) : null)
       if (did) {
         lines.push(`      → ${did}`)
       }
@@ -967,14 +1098,15 @@ async function runFill(
   rows: Row[],
   storeKey: string,
   language: string,
-  size: number,
+  size: string,
   doReplies: boolean,
   /** A fill you asked for retries whatever an automatic one gave up on. */
   isForced = false,
 ): Promise<string> {
   if (isForced) {
     tries.clear()
-  } else if (size === triedAt) {
+    callFailures = 0
+  } else if (size === triedAt || callFailures >= CALL_FAILURES_MAX) {
     return ''
   }
   // A prompt is there at once and a reply is not, so the ask is always written
@@ -987,9 +1119,12 @@ async function runFill(
   // until something else happened to trigger another.
   // With replies off this is always empty, so the loop below has nothing to
   // iterate and `$.model.complete` is never reached for a reply.
+  // A turn still running has only the start of its reply; a line written from
+  // that would be kept for good. It waits until the turn ends.
+  const running = isRunning ? rows[rows.length - 1] : undefined
   const upgradable = () =>
     doReplies
-      ? rows.filter(r => !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '')
+      ? rows.filter(r => r !== running && !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '')
       : []
   if (asksOnly.length === 0 && upgradable().length === 0) {
     return ''
@@ -1014,15 +1149,24 @@ async function runFill(
     // A call that came back with nothing is tried again on the next draw
     // rather than at the next turn; `missed` bounds how often.
     // A failure says nothing: the card already falls back to the raw prompt.
-    const fail = (chunk: Row[]) => {
-      for (const row of chunk) {
-        missed(row.key)
+    // An empty reply can come from what the rows hold, so they are charged for
+    // it. An API error or an abort is not theirs: it counts against the call,
+    // and after a few in a row automatic fills wait for the next turn rather
+    // than retry on every redraw.
+    const fail = (chunk: Row[], reason: string) => {
+      if (reason === 'empty-reply') {
+        for (const row of chunk) {
+          missed(row.key)
+        }
+      } else {
+        callFailures += 1
       }
-      isRetried = true
+      isRetried = callFailures < CALL_FAILURES_MAX
     }
+    // Rows do not depend on summaries, so a landing redraws without refetching
+    // the transcript.
     const land = async () => {
-      await $.store.set(storeKey, summaries)
-      cache = null
+      await saveSummaries($, storeKey)
       $.ui.invalidate('ui.render')
     }
 
@@ -1038,7 +1182,7 @@ async function runFill(
         prompt: asksPrompt(chunk, language),
       })
       if (!reply.isAnswered) {
-        fail(chunk)
+        fail(chunk, reply.reason)
 
         return
       }
@@ -1073,7 +1217,7 @@ async function runFill(
           : batchPrompt(chunk, language),
       })
       if (!reply.isAnswered) {
-        fail(chunk)
+        fail(chunk, reply.reason)
 
         return
       }
@@ -1094,8 +1238,6 @@ async function runFill(
     if (written === 0) {
       return 'nothing to summarise yet'
     }
-    await $.store.set(storeKey, summaries)
-    cache = null
 
     const sum = (usages: Usage[]): Side => ({
       calls: usages.length,
@@ -1118,7 +1260,7 @@ async function runFill(
     // the call is what this summary actually took out of the subscription.
     const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
     spent.quota += quota
-    await $.store.set(`${storeKey}:spent`, spent)
+    await put($, `${storeKey}:spent`, spent)
     $.ui.invalidate('ui.render')
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
@@ -1131,7 +1273,7 @@ async function runFill(
   } finally {
     filling = false
     if (isRetried) {
-      triedAt = -1
+      triedAt = ''
       $.ui.invalidate('ui.render')
     }
   }
@@ -1207,11 +1349,28 @@ export function meterParts(m: Meter): { left: Part[]; right: Part[] } {
   return { left, right }
 }
 
-async function loadStore($: EngineInterface, language: string): Promise<string> {
+let loading: Promise<string> | null = null
+
+/**
+ * One load at a time: a draw and a command overlapping both loaded, and the
+ * second replaced summaries a running fill had just written.
+ */
+function loadStore($: EngineInterface, language: string): Promise<string> {
+  loading ??= loadOnce($, language).catch(error => {
+    loading = null
+    throw error
+  })
+
+  return loading
+}
+
+async function loadOnce($: EngineInterface, language: string): Promise<string> {
   // Asked once: the pane is drawn often and the session does not change.
-  sessionKey ??= `timeline:${await $.session.id()}`
+  const id = await $.session.id()
+  sessionKey ??= `timeline:${id}`
   const storeKey = sessionKey
   if (!loaded) {
+    void touchIndex($, id).catch(() => undefined)
     spent = ((await $.store.get(`${storeKey}:spent`)) as Spent | undefined)
       ?? { calls: 0, input: 0, out: 0, quota: 0 }
     const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
@@ -1228,7 +1387,7 @@ async function loadStore($: EngineInterface, language: string): Promise<string> 
         ) as Record<string, Summary>)
       : {}
     if (was !== language) {
-      await $.store.set(`${storeKey}:language`, language)
+      await put($, `${storeKey}:language`, language)
     }
     // A prompt's row is only known once it has been drawn, and a reload or a
     // resume forgets which were: a card whose turn ran no tool then had
@@ -1248,8 +1407,65 @@ async function loadStore($: EngineInterface, language: string): Promise<string> 
 /** Written from the turn hooks, never from a draw. */
 function saveIds($: EngineInterface): void {
   if (sessionKey !== null && askIds.size > 0) {
-    void $.store.set(`${sessionKey}:ids`, Object.fromEntries(askIds))
+    void put($, `${sessionKey}:ids`, Object.fromEntries(askIds))
   }
+}
+
+function saveSummaries($: EngineInterface, storeKey: string): Promise<void> {
+  return put($, storeKey, summaries)
+}
+
+const INDEX = 'timeline:sessions'
+
+/**
+ * A store write that cannot fail loudly. The store holds 4 MiB across every
+ * session; when a write is refused the oldest fifth of the sessions are
+ * dropped and it is tried once more. Nothing is dropped before that, since a
+ * resumed session would otherwise come back to raw prompts and pay to refill.
+ */
+async function put($: EngineInterface, key: string, value: unknown): Promise<void> {
+  try {
+    await $.store.set(key, value)
+  } catch {
+    try {
+      await evictOldest($)
+      await $.store.set(key, value)
+    } catch {
+      // ponytail: a store still full after eviction keeps this session's
+      // summaries in memory only; they are rewritten by the next fill.
+    }
+  }
+}
+
+/** When each session last opened its pane, so the oldest go first. */
+async function touchIndex($: EngineInterface, id: string): Promise<void> {
+  const index = ((await $.store.get(INDEX)) as Record<string, number> | undefined) ?? {}
+  index[id] = Date.now()
+  await $.store.set(INDEX, index).catch(() => undefined)
+}
+
+export function oldestFifth(index: Record<string, number>, all: string[], keep: string): string[] {
+  const ids = [...new Set(all.map(k => /^timeline:([^:]+)/.exec(k)?.[1]).filter((id): id is string => id !== undefined && id !== 'sessions' && id !== keep))]
+  ids.sort((a, b) => (index[a] ?? 0) - (index[b] ?? 0))
+
+  return ids.slice(0, Math.max(1, Math.ceil(ids.length / 5)))
+}
+
+async function evictOldest($: EngineInterface): Promise<void> {
+  const all = await $.store.keys()
+  const index = ((await $.store.get(INDEX)) as Record<string, number> | undefined) ?? {}
+  const keep = sessionKey?.slice('timeline:'.length) ?? ''
+  const gone = new Set(oldestFifth(index, all, keep))
+  for (const key of all) {
+    const id = /^timeline:([^:]+)/.exec(key)?.[1]
+    if (id !== undefined && gone.has(id)) {
+      await $.store.delete(key)
+    }
+  }
+  for (const id of gone) {
+    delete index[id]
+  }
+  await $.store.set(INDEX, index)
 }
 
 export const register: Register = (on, options) => {
@@ -1265,6 +1481,7 @@ export const register: Register = (on, options) => {
   on('turn.start', ($, e, next) => {
     cache = null
     isRunning = true
+    callFailures = 0
     isCompactRead = false
     saveIds($)
     $.ui.invalidate('ui.render')
@@ -1406,7 +1623,7 @@ export const register: Register = (on, options) => {
     }
     askIds.set(key, e.requestId)
 
-    track($, e.requestId, e.props.onScreen, { text: key })
+    track($, e.requestId, e.props.onScreen, { text: key, isAsk: true })
 
     return next(e)
   })
@@ -1568,7 +1785,10 @@ export const register: Register = (on, options) => {
     }
 
     if (verb === 'fill') {
-      const line = await runFill($, rows, storeKey, language, messages.length, doReplies, true)
+      if (filling) {
+        return { text: 'timeline: a fill is already running.' }
+      }
+      const line = await runFill($, rows, storeKey, language, tailOf(messages), doReplies, true)
 
       const total = spent.calls > 0 ? ` Total so far: ${spentLine()}` : ''
 
@@ -1583,7 +1803,7 @@ export const register: Register = (on, options) => {
     if (opened.isPlaced) {
       // Opening it is the signal that someone wants to read it: catch up on
       // whatever accumulated while it was closed.
-      const line = await runFill($, rows, storeKey, language, messages.length, doReplies)
+      const line = await runFill($, rows, storeKey, language, tailOf(messages), doReplies)
 
       return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
     }
@@ -1603,21 +1823,21 @@ export const register: Register = (on, options) => {
     // drawing loads them itself rather than trusting a command to have run.
     const storeKey = await loadStore($, language)
     await readMeter($)
-    // The transcript is fetched only when a turn or a fill has changed it. A
+    // The transcript is fetched only when a turn has changed it. A
     // redraw because the marker moved reuses the rows it already has, so
     // scrolling does not pull the whole session across on every step.
     let rows: Row[]
-    let size: number
+    let size: string
     if (cache === null) {
       const messages = await $.session.messages()
       if ('deny' in messages) {
         return <Text color="text" dimColor>cannot read this session</Text>
       }
       rows = rowsCached(messages)
-      size = messages.length
+      size = tailOf(messages)
     } else {
       rows = cache.rows
-      size = cache.size
+      size = cache.tail
     }
     // The maps may just have caught up with rows that reported before them.
     recompute()
@@ -1641,7 +1861,7 @@ export const register: Register = (on, options) => {
     // summaries land on the redraw its own invalidate causes. `filling` and
     // the missing count bound it — once nothing is missing, no call runs.
     if (unsummarised > 0 && !filling) {
-      void runFill($, rows, storeKey, language, size, doReplies)
+      void runFill($, rows, storeKey, language, size, doReplies).catch(() => undefined)
     }
 
     // For each row, the last tool call of the rows before it: one pass.
@@ -1676,7 +1896,7 @@ export const register: Register = (on, options) => {
     paneRows = e.props.scroll?.bodyRows ?? paneRows
     // A card's rows: its border, the gap above it, its title and what is
     // drawn under that. The same lines the card draws below.
-    heights = shown.map(row => {
+    heights = !isFinding ? [] : shown.map(row => {
       const summary = summaries[row.key]
       const did = !doReplies
         ? null
@@ -1755,12 +1975,15 @@ export const register: Register = (on, options) => {
         {(isFinding ? shown.slice(findTop, findTop + 40) : shown).map(row => {
           // Its own prompt, else its first tool call, else the last tool call
           // before it — the nearest row above that the transcript can find.
-          const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60))
+          // A duplicate ask's own row once the reports have placed it, else its
+          // first tool call, else a row with its text (which of them is a guess).
+          const id = (sharedKeys.has(row.said) ? askIdByKey.get(row.key) : askIds.get(row.said))
             ?? row.anchor
+            ?? askIds.get(row.said)
             ?? above[row.n - 1]
           const summary = summaries[row.key]
           const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}  `
-          const title = summary?.ask ?? row.ask
+          const title = summary?.ask ?? row.flat
           // Replies off is also "show me only what I asked": the reply line,
           // the tally and the errors all go, though what is stored is kept.
           const did = !doReplies

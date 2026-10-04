@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cardOf, cells, chunksOf, costText, meterParts, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cardOf, cells, chunksOf, clean, costText, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -220,4 +220,41 @@ test('meterParts shows the figures and warns as each nears its edge', () => {
   expect(text(meterParts({ context: 10, compactAt: null }).left)).toBe('Context 10% · auto-compact off')
   expect(meterParts({ fiveHour: 97 }).right[1]!.color).toBe('error')
   expect(meterParts({}).left).toEqual([])
+})
+
+test('tailOf changes when the newest message does, even with the count held at its cap', () => {
+  const a = [msg('user', 'one'), msg('assistant', 'two')]
+  const b = [msg('user', 'one'), msg('assistant', 'two, longer')]
+  expect(tailOf(a)).not.toBe(tailOf(b))
+  expect(tailOf(a)).toBe(tailOf([msg('user', 'one'), msg('assistant', 'two')]))
+})
+
+test('keyOf matches the plain normalisation, also for a long paste', () => {
+  const plain = (t: string) => t.replace(/\s+/g, ' ').trim().slice(0, 60)
+  for (const t of ['  continue  ', 'x'.repeat(5000), `${' '.repeat(700)}late words`, 'a\n\nb\tc '.repeat(200)]) {
+    expect(keyOf(t)).toBe(plain(t))
+  }
+})
+
+test('clean drops colour codes and control characters and keeps the text', () => {
+  expect(clean('\x1b[31mError:\x1b[0m bad\x07 path')).toBe('Error: bad path')
+  expect(clean('汉字 ok')).toBe('汉字 ok')
+})
+
+test('a key two turns share is not used to find either', () => {
+  const rows = rowsOf([msg('user', 'continue'), msg('user', 'other'), msg('user', 'continue')])
+  expect(rows[0]!.said).toBe(rows[2]!.said)
+  expect(rows[0]!.key).not.toBe(rows[2]!.key)
+})
+
+test('oldestFifth picks the least recently used sessions and never the current one', () => {
+  const all = ['timeline:a', 'timeline:a:spent', 'timeline:b', 'timeline:c', 'timeline:d', 'timeline:e', 'timeline:f', 'timeline:sessions']
+  expect(oldestFifth({ a: 1, b: 5, c: 3, d: 4, e: 6, f: 2 }, all, 'a')).toEqual(['f'])
+  expect(oldestFifth({}, all, 'z').length).toBe(2)
+})
+
+test('nearest picks the duplicate whose turn sits among the rows reported with it', () => {
+  expect(nearest([3, 31], [29, 30, 31, 32])).toBe(31)
+  expect(nearest([3, 31], [2, 4])).toBe(3)
+  expect(nearest([3, 31], [])).toBe(undefined)
 })
