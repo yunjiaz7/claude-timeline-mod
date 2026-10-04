@@ -719,6 +719,7 @@ async function runFill(
   }
   filling = true
   triedAt = size
+  let isRetried = false
   const startedAt = await $.clock.now()
   const before = quotaOf(await $.session.usage())
   try {
@@ -728,6 +729,15 @@ async function runFill(
     // One call writing a hundred lines made a first open wait for the last
     // line before showing the first. The backlog goes out in chunks, a few at
     // a time and the newest first, and each chunk is drawn as it lands.
+    // A call that came back with nothing is tried again on the next draw
+    // rather than at the next turn; `missed` bounds how often.
+    const fail = (chunk: Row[], reason: string) => {
+      for (const row of chunk) {
+        missed(row.key)
+      }
+      isRetried = true
+      $.ui.log(`timeline: no summary for ${chunk.length} (${reason})`)
+    }
     const land = async () => {
       await $.store.set(storeKey, summaries)
       cache = null
@@ -740,10 +750,14 @@ async function runFill(
       const reply = await $.model.complete({
         model: 'haiku',
         effort: 'low',
-        maxTokens: 40 + chunk.length * 30,
+        // A floor well above one line: a prompt holding three questions drew
+        // three lines, ran past a cap sized for one, and came back as no reply.
+        maxTokens: 200 + chunk.length * 30,
         prompt: asksPrompt(chunk, language),
       })
       if (!reply.isAnswered) {
+        fail(chunk, reply.reason)
+
         return
       }
       usages.push(reply.usage)
@@ -777,9 +791,7 @@ async function runFill(
           : batchPrompt(chunk, language),
       })
       if (!reply.isAnswered) {
-        for (const row of chunk) {
-          missed(row.key)
-        }
+        fail(chunk, reply.reason)
 
         return
       }
@@ -827,6 +839,10 @@ async function runFill(
       + ` · ${quota.toFixed(1)}% of the 5h window`
   } finally {
     filling = false
+    if (isRetried) {
+      triedAt = -1
+      $.ui.invalidate('ui.render')
+    }
   }
 }
 
