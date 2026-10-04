@@ -805,8 +805,11 @@ async function loadTint($: EngineInterface): Promise<void> {
   if (isTinted) return
   isTinted = true
   const theme = String((await $.config.list()).find(row => row.key === 'theme')?.value ?? '')
-  if (theme.startsWith('light') && !theme.includes('ansi')) tint = 'rgb(252,236,226)'
-  else if (theme.startsWith('dark') && !theme.includes('ansi')) tint = 'rgb(66,46,38)'
+  // `auto` does not say which way it resolved, so it keeps the theme's key.
+  tint = theme.includes('ansi') ? 'userMessageBackground'
+    : theme.startsWith('light') ? 'rgb(252,236,226)'
+    : theme.startsWith('dark') ? 'rgb(66,46,38)'
+    : 'userMessageBackground'
 }
 
 async function loadStore($: EngineInterface, language: string): Promise<string> {
@@ -848,6 +851,8 @@ export const register: Register = (on, options) => {
   // turn.complete — so a new row sat showing its raw text for the whole turn.
   on('turn.start', ($, e, next) => {
     cache = null
+    // The theme may have changed since the last turn; read it again.
+    isTinted = false
     $.ui.invalidate('ui.render')
 
     return next(e)
