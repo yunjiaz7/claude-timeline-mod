@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { verbOf } from './register'
+import { rowsOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -35,4 +35,29 @@ test('verbOf skips flags to reach the subcommand', () => {
   expect(verbOf('git -c user.email=x commit -q -m msg')).toBe('git commit')
   expect(verbOf('curl -s https://api.github.com/x')).toBe('curl')
   expect(verbOf('gh repo create foo --private')).toBe('gh repo')
+})
+
+const msg = (role: 'user' | 'assistant', text: string, toolUses: unknown[] = []) =>
+  ({ role, text, toolUses }) as never
+
+test('rowsOf opens a row per sent message and attributes the work after it', () => {
+  const rows = rowsOf([
+    msg('user', 'run the ablation'),
+    msg('assistant', 'ok', [
+      { tool: 'Bash', input: { command: 'cd /x && python train.py' } },
+      { tool: 'Write', input: { file_path: '/x/results.json' } },
+    ]),
+    msg('assistant', 'done', [{ tool: 'Bash', input: { command: 'cat /x/results.json' } }]),
+    msg('user', '<task-notification> finished'),
+  ])
+
+  expect(rows.length).toBe(2)
+  expect(rows[0].isInjected).toBe(false)
+  expect(rows[0].details).toEqual([
+    '1 file(s): results.json',
+    '2 command(s): python train.py, cat',
+  ])
+  // An injected turn still opens a row, and reads differently.
+  expect(rows[1].isInjected).toBe(true)
+  expect(rows[1].details).toEqual([])
 })

@@ -28,6 +28,9 @@ plugin panes, so `print` is the form that reaches them.
        4 command(s): scp×2, cat×2
 ```
 
+Click a row in the pane to scroll the transcript to that message. A turn
+restored from history was never drawn, so it carries no id and no jump.
+
 `❯` is a turn you typed. `⏱` is one injected — a background task reporting, a
 scheduled trigger, a slash command.
 
