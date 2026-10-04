@@ -2,6 +2,7 @@
   "name": "timeline",
   "version": "0.1.0",
   "description": "Claude Code mod: what actually happened this session, turn by turn",
+  "types": "./types/index.d.ts",
   "userConfig": {
     "language": {
       "type": "string",

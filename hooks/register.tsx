@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
@@ -53,6 +54,20 @@ const askIds = new Map<string, string>()
 type Seen = { tool?: string; text?: string; isAsk?: boolean; at: number }
 const visible = new Map<string, Seen>()
 let markedN: number | null = null
+/**
+ * The marked turn, published for the pane. Writing it redraws the pane and
+ * nothing else; invalidating `ui.render` redraws every transcript row as well,
+ * which is the cost to avoid while the transcript scrolls.
+ */
+const markAtom = atom({ plugin: 'timeline', key: 'mark' } as const, null as number | null)
+let published: number | null = null
+/**
+ * Each row's last `onScreen`, as text. A redraw the loop asked for reports
+ * the same value again; a different one means the transcript moved.
+ */
+const lastSeen = new Map<string, string>()
+/** Whether a row reported a move since the loop's last tick. */
+let hasMoved = false
 let turnOfTool = new Map<string, number>()
 let turnOfText = new Map<string, number>()
 /** Texts more than one turn carries, with the turns that carry each. */
@@ -124,9 +139,15 @@ function recompute(): void {
       unsure.push([id, seen])
     }
   }
+  // Placed by the rows around them; with nothing around them that can be
+  // placed, the latest turn with that text, as it was before duplicates were
+  // told apart — but that guess is not kept as a jump target.
+  const placed = [...known]
   for (const [id, seen] of unsure) {
-    const n = nearest(sharedKeys.get(seen.text!)!, known)
+    const candidates = sharedKeys.get(seen.text!)!
+    const n = nearest(candidates, placed)
     if (n === undefined) {
+      known.push(Math.max(...candidates))
       continue
     }
     known.push(n)
@@ -160,8 +181,15 @@ function track($: EngineInterface, id: string, os: unknown, by: { tool?: string;
     return
   }
   const at = Date.now()
-  if (at >= inducedUntil) {
-    // A report nobody asked for means the transcript is moving.
+  const was = lastSeen.get(id)
+  const now = JSON.stringify(os)
+  if (lastSeen.size > 5000) {
+    lastSeen.clear()
+  }
+  lastSeen.set(id, now)
+  if (was !== now) {
+    // A row that reports a new place means the transcript is moving.
+    hasMoved = true
     ticksLeft = FAST_TICKS
     if (waiting !== null) {
       waiting.cancel()
@@ -189,13 +217,12 @@ function track($: EngineInterface, id: string, os: unknown, by: { tool?: string;
  * transcript last moved, then once every few seconds as a net for a move that
  * raised no report at all.
  */
-const FAST_TICKS = 8
+const FAST_TICKS = 3
 const FAST_MS = 200
 const SLOW_MS = 3000
 let ticksLeft = 0
 let looping = false
 let waiting: { cancel: () => void } | null = null
-let inducedUntil = 0
 /** The card the pane was last scrolled to, so it is moved only on a change. */
 let scrolledTo: number | null = null
 
@@ -206,11 +233,20 @@ function step($: EngineInterface): void {
       return
     }
     const before = markedN
-    inducedUntil = Date.now() + 180
-    $.ui.invalidate('ui.render')
+    // While the transcript moves the rows report on their own, so the loop
+    // only asks for a full redraw when none did: after a move stops, and as
+    // the slow net for a move that raised no report at all.
+    if (!hasMoved) {
+      $.ui.invalidate('ui.render')
+    }
+    hasMoved = false
     $.clock.after(FAST_MS, () => {
       if (markedN !== before) {
         ticksLeft = FAST_TICKS
+      }
+      if (markedN !== published) {
+        published = markedN
+        void update($, markAtom, () => markedN).catch(() => undefined)
       }
       // Out here, not in the draw: keep the marked card inside the pane's own
       // window as well.
@@ -1319,8 +1355,8 @@ type Part = { text: string; color: string; bold?: boolean }
 /**
  * The usage line, left side and right side. A figure turns to the theme's
  * warning colour when it is close to the point where something happens to it:
- * within ten points of compaction, or past 80% of a rate window, and to the
- * error colour past 95%.
+ * ten points or less left before compaction, or past 80% of a rate window,
+ * and to the error colour at three points left or past 95%.
  */
 export function meterParts(m: Meter): { left: Part[]; right: Part[] } {
   const label = (text: string): Part => ({ text, color: 'inactive' })
@@ -1331,10 +1367,12 @@ export function meterParts(m: Meter): { left: Part[]; right: Part[] } {
   })
   const left: Part[] = []
   if (m.context !== undefined) {
-    const isNear = typeof m.compactAt === 'number' && m.context >= m.compactAt - 10
-    left.push(label('Context '), figure(m.context, isNear))
+    left.push(label('Context '), figure(m.context, false))
     if (typeof m.compactAt === 'number') {
-      left.push(label(` · compacts at ${m.compactAt}%`))
+      // What is left before auto-compaction runs, in the same unit as the
+      // figure beside it: "60% · 37% to compact", not the threshold itself.
+      const rest = Math.max(0, m.compactAt - m.context)
+      left.push(label(' · '), figure(rest, rest <= 10, rest <= 3), label(' to compact'))
     } else if (m.compactAt === null) {
       left.push(label(' · auto-compact off'))
     }
@@ -1839,6 +1877,9 @@ export const register: Register = (on, options) => {
       rows = cache.rows
       size = cache.tail
     }
+    // Read so that publishing a new mark redraws this pane; the module's own
+    // value is the one used, being never older.
+    await read($, markAtom)
     // The maps may just have caught up with rows that reported before them.
     recompute()
     loop($)
