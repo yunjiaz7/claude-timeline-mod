@@ -79,3 +79,4 @@ test('rowsOf anchors a row to its first tool call', () => {
   expect(rows[0].anchor).toBe('toolu_1')
   expect(rows[1].anchor).toBe(undefined)
 })
+

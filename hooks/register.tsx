@@ -229,41 +229,55 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" paddingRight={1}>
-        <Text dimColor>{rows.length} turns that did something</Text>
+        <Text dimColor>
+          {rows.length} turns · {rows.filter(r => r.isInjected).length} unattended
+        </Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60)) ?? row.anchor
-          const label = `${row.isInjected ? '⏱' : '❯'} ${row.n}  ${head(row.ask, width)}`
+          // One accent, everything else grayscale, red kept for failure alone.
+          // An unattended turn recedes entirely: it is background until it breaks.
+          const label = (
+            <Text wrap="wrap">
+              <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
+                {row.isInjected ? '⏱' : '❯'} {row.n}
+              </Text>
+              <Text dimColor={row.isInjected}>{'  '}{head(row.ask, width)}</Text>
+            </Text>
+          )
 
           return (
-          <Box
-            key={`t${row.n}`}
-            flexDirection="column"
-            marginTop={1}
-            paddingX={1}
-            borderStyle="round"
-            borderDimColor
-          >
-            {id === undefined ? (
-              <Text bold color={row.isInjected ? 'yellow' : 'cyan'} wrap="wrap">{label}</Text>
-            ) : (
-              <Button
-                plain
-                key={`j${row.n}`}
-                onPress={() => {
-                  void $.ui.scroll({ to: { requestId: id }, block: 'start' })
-                }}
-              >
-                {label}
-              </Button>
-            )}
-            {row.details.map((d, i) => (
-              <Text key={`t${row.n}d${i}`} dimColor wrap="wrap">
-                {'  '}
-                {d}
-              </Text>
-            ))}
-          </Box>
+            <Box
+              key={`t${row.n}`}
+              flexDirection="column"
+              marginTop={1}
+              paddingX={1}
+              borderStyle="round"
+              borderColor="promptBorder"
+              borderDimColor
+            >
+              {id === undefined ? label : (
+                <Button
+                  plain
+                  key={`j${row.n}`}
+                  onPress={() => {
+                    void $.ui.scroll({ to: { requestId: id }, block: 'start' })
+                  }}
+                >
+                  {label}
+                </Button>
+              )}
+              {row.details.map((d, i) => (
+                <Text
+                  key={`t${row.n}d${i}`}
+                  color={d.startsWith('⚠') ? 'error' : undefined}
+                  dimColor={!d.startsWith('⚠')}
+                  wrap="wrap"
+                >
+                  {d}
+                </Text>
+              ))}
+            </Box>
           )
         })}
       </Box>
