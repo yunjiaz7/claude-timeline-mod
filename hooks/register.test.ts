@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, chunksOf, costText, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cells, chunksOf, costText, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -185,4 +185,10 @@ test('a row keeps its key when the turns before it are gone', () => {
   expect(tail[0]!.n).toBe(1)
   expect(tail[0]!.key).toBe(full[1]!.key)
   expect(full[2]!.key).not.toBe(full[3]!.key)
+})
+
+test('parseFind keeps the order given, each number once, and only rows that exist', () => {
+  expect(parseFind('12, 3, 12, 40', 20)).toEqual([12, 3])
+  expect(parseFind('none', 20)).toEqual([])
+  expect(parseFind('Turns 7 and 2.', 20)).toEqual([7, 2])
 })

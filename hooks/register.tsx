@@ -168,7 +168,7 @@ function step($: EngineInterface): void {
       }
       // Out here, not in the draw: keep the marked card inside the pane's own
       // window as well.
-      if (markedN !== null && markedN !== scrolledTo) {
+      if (markedN !== null && markedN !== scrolledTo && !isFinding) {
         scrolledTo = markedN
         void $.ui.scroll({ to: { key: `t${markedN}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
       }
@@ -240,7 +240,7 @@ let triedAt = -1
 type Side = { calls: number; input: number; out: number }
 // `asks` and `replies` came later than the totals: a session summarised before
 // them has totals larger than the two sides, and the rest is shown as earlier.
-type Spent = Side & { quota: number; asks?: Side; replies?: Side }
+type Spent = Side & { quota: number; asks?: Side; replies?: Side; finds?: Side }
 
 /**
  * What this session's fills have cost. Kept in the store, not just in memory:
@@ -268,10 +268,11 @@ export function costText(total: Spent, doReplies: boolean): string {
   const none: Side = { calls: 0, input: 0, out: 0 }
   const asks = total.asks ?? none
   const replies = total.replies ?? none
+  const finds = total.finds ?? none
   const earlier: Side = {
-    calls: total.calls - asks.calls - replies.calls,
-    input: total.input - asks.input - replies.input,
-    out: total.out - asks.out - replies.out,
+    calls: total.calls - asks.calls - replies.calls - finds.calls,
+    input: total.input - asks.input - replies.input - finds.input,
+    out: total.out - asks.out - replies.out - finds.out,
   }
   const line = (name: string, side: Side, note = '') =>
     `  ${name.padEnd(9)}${String(side.calls).padStart(4)} call${side.calls === 1 ? ' ' : 's'} · ${k(side.input)} in / ${k(side.out)} out`
@@ -282,6 +283,7 @@ export function costText(total: Spent, doReplies: boolean): string {
     '',
     line('prompts', asks, '   summarising what you asked'),
     line('replies', replies, '   summarising what Claude did'),
+    ...(finds.calls > 0 ? [line('searches', finds, '   /timeline find')] : []),
     ...(earlier.calls > 0 ? [line('earlier', earlier, '   before the two were counted apart')] : []),
     '',
     `  ${total.quota.toFixed(1)}% of the 5h window in all. Dollars are Haiku's API list price, for scale:`,
@@ -348,6 +350,96 @@ export function cells(text: string): number {
   }
 
   return n
+}
+
+// The search box. Module state: a reload closes it, which is what a reload
+// of a search nobody is typing into should do.
+let isFinding = false
+let query = ''
+/** Row numbers, best first; null before a search has answered. */
+let matches: number[] | null = null
+let isSearching = false
+/** Rows the box takes at the head of the pane: the field, the status, a gap. */
+const FIND_ROWS = 3
+
+/**
+ * One call: every turn as a line, and the thing being looked for. The model
+ * matches on meaning, which is the point — a summary rarely holds the word
+ * the person remembers.
+ */
+function findPrompt(rows: Row[], store: Record<string, Summary>, wanted: string): string {
+  return [
+    'Below are the turns of a coding session, one per line: its number, what',
+    'the user asked, and what the assistant did.',
+    '',
+    'Someone is looking for a turn and describes it from memory. Pick the turns',
+    'that match what they mean, even when the words differ or the language does.',
+    '',
+    'Answer with the numbers only, best match first, comma-separated, at most 8.',
+    'If nothing matches, answer: none',
+    '',
+    `LOOKING FOR: ${wanted.slice(0, 400)}`,
+    '',
+    ...rows.map(r => {
+      const summary = store[r.key]
+      const did = summary?.did ? ` => ${summary.did}` : ''
+
+      return `${r.n}. ${summary?.ask ?? ''} | ${excerpt(r.ask, 80, 120)}${did}`
+    }),
+  ].join('\n')
+}
+
+/** The numbers in a find reply, in the order given, each once and within `1..max`. */
+export function parseFind(text: string, max: number): number[] {
+  const out: number[] = []
+  for (const found of text.match(/\d+/g) ?? []) {
+    const n = Number(found)
+    if (n >= 1 && n <= max && !out.includes(n)) {
+      out.push(n)
+    }
+  }
+
+  return out.slice(0, 8)
+}
+
+async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise<void> {
+  query = wanted.trim()
+  if (query === '') {
+    matches = null
+    $.ui.invalidate('ui.render')
+
+    return
+  }
+  isSearching = true
+  $.ui.invalidate('ui.render')
+  try {
+    const reply = await $.model.complete({
+      model: 'haiku',
+      effort: 'low',
+      maxTokens: 100,
+      prompt: findPrompt(rows, summaries, query),
+    })
+    matches = reply.isAnswered ? parseFind(reply.text, rows.length) : []
+    if (reply.isAnswered && reply.usage !== undefined && sessionKey !== null) {
+      const by: Side = {
+        calls: 1,
+        input: reply.usage.cache_read_input_tokens + reply.usage.input_tokens,
+        out: reply.usage.output_tokens,
+      }
+      const was = spent.finds ?? { calls: 0, input: 0, out: 0 }
+      spent = {
+        ...spent,
+        calls: spent.calls + 1,
+        input: spent.input + by.input,
+        out: spent.out + by.out,
+        finds: { calls: was.calls + 1, input: was.input + by.input, out: was.out + by.out },
+      }
+      await $.store.set(`${sessionKey}:spent`, spent)
+    }
+  } finally {
+    isSearching = false
+    $.ui.invalidate('ui.render')
+  }
 }
 
 /** `text` followed by the spaces that bring it to `n` cells. */
@@ -638,7 +730,7 @@ function batchPrompt(rows: Row[], language: string): string {
   ].join('\n')
 }
 
-export const VERBS = ['help', 'fill', 'cost', 'lang', 'replies', 'close'] as const
+export const VERBS = ['help', 'find', 'fill', 'cost', 'lang', 'replies', 'close'] as const
 
 function distance(a: string, b: string): number {
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
@@ -1066,7 +1158,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
-      description: 'What this session did — `fill`, `cost`, `lang`, `replies on|off`, `close`',
+      description: 'What this session did — `find`, `fill`, `cost`, `lang`, `replies on|off`, `close`',
     })
 
     return next(e)
@@ -1084,6 +1176,7 @@ export const register: Register = (on, options) => {
           'timeline — what this session actually did, turn by turn.',
           '',
           '  /timeline                 open the pane (or print it where none can be drawn)',
+          '  /timeline find [words]    search box at the top of the pane; again to close it',
           '  /timeline fill            summarise everything missing now',
           '  /timeline cost            what the summaries took: prompts, replies, share of the 5h window',
           '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
@@ -1171,6 +1264,35 @@ export const register: Register = (on, options) => {
       return { text: costText(spent, doReplies) }
     }
 
+    if (verb === 'find') {
+      // Bare, it is a switch: the box opens, and the same words close it.
+      if (rest === '' && isFinding) {
+        isFinding = false
+        query = ''
+        matches = null
+        $.ui.invalidate('ui.render')
+
+        return { text: 'timeline: search closed' }
+      }
+      isFinding = true
+      // `focus` hands the keyboard to the pane, where the field asks for it.
+      const opened = await $.ui.open({ id: PANE, title: 'Timeline', focus: true })
+      if (!opened.isPlaced) {
+        isFinding = false
+
+        return { text: `timeline: this surface draws no pane (${opened.reason})` }
+      }
+      void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
+      if (rest !== '') {
+        void runFind($, rows, rest)
+
+        return { text: `timeline: searching for "${rest}"` }
+      }
+      $.ui.invalidate('ui.render')
+
+      return { text: 'timeline: search open — type in the box and press Enter; `/timeline find` again closes it' }
+    }
+
     if (verb === 'fill') {
       const line = await runFill($, rows, storeKey, language, messages.length, doReplies, true)
 
@@ -1256,10 +1378,27 @@ export const register: Register = (on, options) => {
       return before
     })
 
+    // Not every surface has a text field; where there is none the box is not
+    // drawn and `/timeline find <words>` still searches.
+    const table = $.ui.resolve(e)
+    const Input = 'Input' in table ? table.Input : undefined
+    const shown = isFinding && matches !== null
+      ? matches.map(n => rows[n - 1]).filter((r): r is Row => r !== undefined)
+      : rows
+    const status = isSearching
+      ? 'searching…'
+      : matches === null
+        ? 'Enter to search by meaning · /timeline find to close'
+        : matches.length === 0
+          ? `nothing matches "${head(query, 30)}"`
+          : `${matches.length} match${matches.length > 1 ? 'es' : ''}, best first · empty search shows all`
+
     return (
       <Box flexDirection="column" paddingRight={1}>
         {rows.length === 0 && <Text color="text" dimColor>Nothing yet.</Text>}
-        {rows.map(row => {
+        {/* Room for the search box, which is drawn last and out of the flow. */}
+        {isFinding && Input !== undefined && <Box height={FIND_ROWS} />}
+        {shown.map(row => {
           // Its own prompt, else its first tool call, else the last tool call
           // before it — the nearest row above that the transcript can find.
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60))
@@ -1334,6 +1473,32 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
+        {/* The search box stays at the head of the window: it sits out of the
+            flow at the row the pane is scrolled to, and is drawn last so it
+            paints over the cards that pass under it. Padded lines, so what is
+            under them does not show through. */}
+        {isFinding && Input !== undefined && (
+          <Box position="absolute" top={e.props.scroll?.offset ?? 0} left={0} flexDirection="column">
+            {/* A field is as wide as its text; a blank line under it covers
+                the rest of the row. */}
+            <Box position="absolute" top={0} left={0}>
+              <Text>{pad('', width + 4)}</Text>
+            </Box>
+            <Input
+              key="find"
+              label="Find"
+              placeholder="describe the turn you are looking for"
+              value={query}
+              submitLabel="search"
+              autoFocus
+              onSubmit={(value: string) => {
+                void runFind($, rows, value)
+              }}
+            />
+            <Text color="inactive">{pad(status, width + 4)}</Text>
+            <Text>{pad('', width + 4)}</Text>
+          </Box>
+        )}
       </Box>
     )
   })
