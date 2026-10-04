@@ -34,14 +34,12 @@ the morning.
 
 Every turn gets a row, talk-only ones included — a trajectory with holes in
 its numbering is not a trajectory. The headline is the ask as the model read
-it (the point of the turn, not its wording); press its number to go read what
-you actually wrote.
+it (the point of the turn, not its wording); press it to go read what you
+actually wrote.
 
-A dimmed row is one that was injected rather than typed — a background task
-reporting, a scheduled trigger, a slash command. The number, drawn `[ 12 ]`,
-is the control: press it and the transcript scrolls to that turn. The title
-beside it is text in the theme's colour, because a button's label cannot be
-coloured and went unreadable wherever the theme and the terminal disagreed. It aims at the message itself where that
+`❯` is a turn you typed, `⏱` one injected — a background task reporting, a
+scheduled trigger, a slash command. The headline is the control: press it and
+the transcript scrolls to that turn. It aims at the message itself where that
 row has been drawn, and otherwise at the turn's first tool row, whose
 requestId is its tool_use_id — read straight from the transcript, so turns
 from before the mod was installed jump too.
