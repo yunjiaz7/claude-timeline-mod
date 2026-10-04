@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, chunksOf, costText, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf } from './register'
+import { cells, chunksOf, costText, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -160,4 +160,18 @@ test('costText splits prompts from replies and keeps what was spent before the s
   expect(text).toContain('earlier     3 calls · 3.0k in / 200 out')
   expect(text).toContain('/timeline replies off')
   expect(costText({ calls: 0, input: 0, out: 0, quota: 0 }, true)).toContain('nothing spent')
+})
+
+test('wrapCells breaks at a space when it can and mid-word when it cannot', () => {
+  expect(wrapCells('one two three four', 9)).toEqual(['one two', 'three', 'four'])
+  expect(wrapCells('汉字汉字汉', 6)).toEqual(['汉字汉', '字汉'])
+  expect(wrapCells('short', 20)).toEqual(['short'])
+  for (const line of wrapCells('  → 生成了约120字的详细段落 with some English words mixed in', 16)) {
+    expect(cells(line) <= 16).toBe(true)
+  }
+})
+
+test('a stray closing pipe is not part of the summary', () => {
+  expect(parseFill('3|ask|did it|')[3]).toEqual({ ask: 'ask', did: 'did it' })
+  expect(parseAsks('4|wanted this |')[4]).toBe('wanted this')
 })

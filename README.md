@@ -34,12 +34,16 @@ the morning.
 
 Every turn gets a row, talk-only ones included — a trajectory with holes in
 its numbering is not a trajectory. The headline is the ask as the model read
-it (the point of the turn, not its wording); press it to go read what you
-actually wrote.
+it (the point of the turn, not its wording); click anywhere on the card to go
+read what you actually wrote.
 
 `❯` is a turn you typed, `⏱` one injected — a background task reporting, a
-scheduled trigger, a slash command. The headline is the control: press it and
-the transcript scrolls to that turn. It aims at the message itself where that
+scheduled trigger, a slash command. The whole card is the control: click any
+line of it and the transcript scrolls to that turn. Only a Button takes a
+press and its hit area is its label, so each line is a Button padded to the
+card's width. Their text rests in the theme's `inactive` grey and comes up to
+the theme's text colour under the pointer — every colour in the pane is a
+theme key, so it reads the same whatever the terminal's own colours are. It aims at the message itself where that
 row has been drawn, and otherwise at the turn's first tool row, whose
 requestId is its tool_use_id — read straight from the transcript, so turns
 from before the mod was installed jump too.

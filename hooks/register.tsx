@@ -350,6 +350,46 @@ export function cells(text: string): number {
   return n
 }
 
+/** `text` followed by the spaces that bring it to `n` cells. */
+function pad(text: string, n: number): string {
+  return text + ' '.repeat(Math.max(0, n - cells(text)))
+}
+
+/**
+ * `text` as lines of at most `n` cells, broken at a space where the line has
+ * one late enough and mid-word otherwise (CJK has no spaces to break at).
+ */
+export function wrapCells(text: string, n: number): string[] {
+  const lines: string[] = []
+  let line = ''
+  let used = 0
+  for (const ch of text) {
+    const w = WIDE.test(ch) ? 2 : 1
+    if (used + w > n) {
+      const at = line.lastIndexOf(' ')
+      if (ch !== ' ' && at > line.length / 2) {
+        lines.push(line.slice(0, at))
+        line = line.slice(at + 1)
+        used = cells(line)
+      } else {
+        lines.push(line)
+        line = ''
+        used = 0
+        if (ch === ' ') {
+          continue
+        }
+      }
+    }
+    line += ch
+    used += w
+  }
+  if (line !== '') {
+    lines.push(line)
+  }
+
+  return lines
+}
+
 /** Flatten to one line and cut it to `n` terminal cells, not `n` characters. */
 function head(text: string, n: number): string {
   const flat = text.replace(/<[^>]+>/g, ' ').split(/\s+/).join(' ').trim()
@@ -645,7 +685,7 @@ export function resolveVerb(word: string): string | null {
 export function parseAsks(text: string): Record<number, string> {
   const out: Record<number, string> = {}
   for (const line of text.split('\n')) {
-    const match = /^\s*(\d+)\s*\|\s*(.+?)\s*$/.exec(line)
+    const match = /^\s*(\d+)\s*\|\s*(.+?)[\s|]*$/.exec(line)
     if (match !== null) {
       out[Number(match[1])] = match[2]!
     }
@@ -657,7 +697,7 @@ export function parseAsks(text: string): Record<number, string> {
 export function parseFill(text: string): Record<number, { ask: string; did: string }> {
   const out: Record<number, { ask: string; did: string }> = {}
   for (const line of text.split('\n')) {
-    const match = /^\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*$/.exec(line)
+    const match = /^\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)[\s|]*$/.exec(line)
     if (match !== null) {
       out[Number(match[1])] = { ask: match[2]!, did: match[3]! }
     }
@@ -1173,7 +1213,10 @@ export const register: Register = (on, options) => {
     recompute()
     loop($)
     const nowAt = markedN
-    const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
+    // The pane's own body, not `e.viewport`: that is the conversation's width,
+    // and sizing by it cut every line for a column twice as wide as the pane.
+    // Less the pane's right pad, the card's border and its padding.
+    const width = Math.max(20, (e.props.bodyColumns ?? 60) - 5)
     // What is left to write, counting a row that has only its ask: the trigger
     // below and the footer both read this, and counting only rows with nothing
     // at all meant a half-written row never asked for its other half.
@@ -1210,18 +1253,36 @@ export const register: Register = (on, options) => {
             ?? row.anchor
             ?? above[row.n - 1]
           const summary = summaries[row.key]
-          const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}`
+          const mark = `${row.isInjected ? '⏱' : '❯'} ${row.n}  `
           const title = summary?.ask ?? row.ask
-          // The number carries the accent and the ask carries the default tone,
-          // so a row reads as a label and a title rather than one grey string.
-          // A Button takes a plain string, so the number sits beside it: short
-          // and fixed, it cannot wrap and push the ask under itself.
-          const askText = head(title, width - cells(mark) - 3)
           // Replies off is also "show me only what I asked": the reply line,
           // the tally and the errors all go, though what is stored is kept.
           const did = !doReplies
             ? null
             : summary?.did || (summary !== undefined ? pendingOf(row, isRunning && row.n === rows.length, filling) : null)
+          const jump = () => {
+            void $.ui.scroll({ to: { requestId: id! }, block: 'start' })
+          }
+          // One line of the card. Only a Button takes a press, and its hit area
+          // is its label, so each line is a Button padded to the card's width:
+          // a click anywhere on the card lands on one. A Button's label takes
+          // no colour at rest except through `dimColor`, which the engine
+          // draws in the theme's `inactive` — the terminal's own foreground
+          // vanished wherever the theme and the terminal disagreed. Under the
+          // pointer the whole card comes up to the theme's text colour.
+          const line = (key: string, text: string, room = width) =>
+            id === undefined ? (
+              <Text key={key} color="inactive">{text}</Text>
+            ) : (
+              <Button
+                plain
+                dimColor
+                key={key}
+                label={pad(text, room)}
+                hover={{ color: 'text', dimColor: false, inverse: false }}
+                onPress={jump}
+              />
+            )
 
           return (
             <Box
@@ -1240,51 +1301,18 @@ export const register: Register = (on, options) => {
               backgroundColor={row.n === nowAt ? 'inverseText' : undefined}
             >
               <Box flexDirection="row">
-                {/* A raw prompt can measure wider than `cells` counted it; held
-                    at its own width, the number is not what gives way. */}
                 <Box flexShrink={0}>
-                  <Text color={row.isInjected ? 'text' : 'claude'} dimColor={row.isInjected} bold>
-                    {mark}
-                    {'  '}
-                  </Text>
+                  <Text color={row.isInjected ? 'inactive' : 'claude'} bold>{mark}</Text>
                 </Box>
-                {id === undefined ? (
-                  <Text wrap="truncate-end" color="text" dimColor={row.isInjected}>{askText}</Text>
-                ) : (
-                  <Button
-                    plain
-                    key={`j${row.n}`}
-                    label={askText}
-                    dimColor={row.isInjected}
-                    // A Button's label takes the terminal's foreground and no
-                    // colour of its own at rest; under the pointer it can take
-                    // the theme's, which is what keeps it readable when the
-                    // theme and the terminal disagree.
-                    hover={{ color: 'text' }}
-                    onPress={() => {
-                      void $.ui.scroll({ to: { requestId: id }, block: 'start' })
-                    }}
-                  />
-                )}
+                {line(`j${row.n}`, head(title, width - cells(mark)), width - cells(mark))}
               </Box>
-              {did !== null && (
-                // An ask-only row is written the moment the prompt lands and
-                // upgraded when the reply exists. A bare arrow reads as broken,
-                // so a row still waiting says which wait it is in: a call is
-                // running, or there is nothing to run it on yet.
-                // The theme's text colour, not the terminal's: when the two
-                // disagree (a light theme on a dark terminal) the terminal's
-                // foreground vanishes into the pane's ground.
-                <Text wrap="wrap" color="text" dimColor={!summary?.did || row.isInjected}>
-                  {'  → '}
-                  {did}
-                </Text>
-              )}
-              {doReplies && row.facts.length > 0 && <Text color="text" dimColor>{'  '}{row.facts.join(' · ')}</Text>}
+              {did !== null && wrapCells(`  → ${did}`, width).map((text, i) => line(`d${row.n}.${i}`, text))}
+              {doReplies && row.facts.length > 0
+                && wrapCells(`  ${row.facts.join(' · ')}`, width).map((text, i) => line(`f${row.n}.${i}`, text))}
               {(doReplies ? row.errors : []).slice(0, 2).map((err, i) => (
                 <Text key={`t${row.n}e${i}`} color="error" wrap="wrap">
                   {'  ⚠ '}
-                  {head(err, width)}
+                  {head(err, width - 4)}
                 </Text>
               ))}
               {doReplies && row.errors.length > 2 && (
