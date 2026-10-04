@@ -359,8 +359,12 @@ let query = ''
 /** Row numbers, best first; null before a search has answered. */
 let matches: number[] | null = null
 let isSearching = false
-/** Rows the box takes at the head of the pane: the field, the status, a gap. */
-const FIND_ROWS = 3
+// While the box is open the pane's window never moves: the box is the head
+// of the tree and the cards under it are scrolled here, by leaving out the
+// ones above `findTop`. A box that chased the window's offset was drawn one
+// frame late on every tick and flickered.
+let findTop = 0
+let findCount = 0
 
 /**
  * One call: every turn as a line, and the thing being looked for. The model
@@ -404,6 +408,7 @@ export function parseFind(text: string, max: number): number[] {
 
 async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise<void> {
   query = wanted.trim()
+  findTop = 0
   if (query === '') {
     matches = null
     $.ui.invalidate('ui.render')
@@ -1122,6 +1127,21 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  on('ui.scroll', { requestId: PANE }, ($, e, next) => {
+    if (!isFinding) {
+      return next(e)
+    }
+    // A tick is a row or a few; a card is about four.
+    const cards = Math.sign(e.by) * Math.max(1, Math.round(Math.abs(e.by) / 4))
+    const to = Math.min(Math.max(0, findCount - 1), Math.max(0, findTop + cards))
+    if (to !== findTop) {
+      findTop = to
+      $.ui.invalidate('ui.render')
+    }
+
+    return {}
+  })
+
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
     const key = keyOf(e.props.text)
     if (key === '') {
@@ -1274,15 +1294,15 @@ export const register: Register = (on, options) => {
 
         return { text: 'timeline: search closed' }
       }
-      isFinding = true
       // `focus` hands the keyboard to the pane, where the field asks for it.
       const opened = await $.ui.open({ id: PANE, title: 'Timeline', focus: true })
       if (!opened.isPlaced) {
-        isFinding = false
-
         return { text: `timeline: this surface draws no pane (${opened.reason})` }
       }
-      void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
+      // The window goes to the head before the box takes over its scrolling.
+      await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
+      isFinding = true
+      findTop = 0
       if (rest !== '') {
         void runFind($, rows, rest)
 
@@ -1290,7 +1310,7 @@ export const register: Register = (on, options) => {
       }
       $.ui.invalidate('ui.render')
 
-      return { text: 'timeline: search open — type in the box and press Enter; `/timeline find` again closes it' }
+      return { text: 'timeline: search open — type in the box and press Enter. `/timeline find` again closes it.' }
     }
 
     if (verb === 'fill') {
@@ -1385,20 +1405,43 @@ export const register: Register = (on, options) => {
     const shown = isFinding && matches !== null
       ? matches.map(n => rows[n - 1]).filter((r): r is Row => r !== undefined)
       : rows
+    findCount = shown.length
     const status = isSearching
       ? 'searching…'
       : matches === null
-        ? 'Enter to search by meaning · /timeline find to close'
+        ? 'Enter searches by meaning'
         : matches.length === 0
-          ? `nothing matches "${head(query, 30)}"`
-          : `${matches.length} match${matches.length > 1 ? 'es' : ''}, best first · empty search shows all`
+          ? `nothing matches "${head(query, 24)}"`
+          : `${matches.length} match${matches.length > 1 ? 'es' : ''}, best first`
 
     return (
       <Box flexDirection="column" paddingRight={1}>
         {rows.length === 0 && <Text color="text" dimColor>Nothing yet.</Text>}
-        {/* Room for the search box, which is drawn last and out of the flow. */}
-        {isFinding && Input !== undefined && <Box height={FIND_ROWS} />}
-        {shown.map(row => {
+        {isFinding && Input !== undefined && (
+          <Box flexDirection="column">
+            <Box borderStyle="round" borderColor="claude" paddingX={1}>
+              <Input
+                key="find"
+                label="Find"
+                placeholder="describe the turn you are looking for"
+                value={query}
+                submitLabel="search"
+                autoFocus
+                onSubmit={(value: string) => {
+                  void runFind($, rows, value)
+                }}
+              />
+            </Box>
+            {/* The command that closes it is the one thing here to act on, so
+                it is the one thing in the accent. */}
+            <Box flexDirection="row" paddingX={2}>
+              <Text color="inactive">{status} · </Text>
+              <Text color="claude" bold>/timeline find</Text>
+              <Text color="inactive"> closes</Text>
+            </Box>
+          </Box>
+        )}
+        {(isFinding ? shown.slice(findTop, findTop + 40) : shown).map(row => {
           // Its own prompt, else its first tool call, else the last tool call
           // before it — the nearest row above that the transcript can find.
           const id = askIds.get(row.ask.replace(/\s+/g, ' ').trim().slice(0, 60))
@@ -1473,32 +1516,6 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
-        {/* The search box stays at the head of the window: it sits out of the
-            flow at the row the pane is scrolled to, and is drawn last so it
-            paints over the cards that pass under it. Padded lines, so what is
-            under them does not show through. */}
-        {isFinding && Input !== undefined && (
-          <Box position="absolute" top={e.props.scroll?.offset ?? 0} left={0} flexDirection="column">
-            {/* A field is as wide as its text; a blank line under it covers
-                the rest of the row. */}
-            <Box position="absolute" top={0} left={0}>
-              <Text>{pad('', width + 4)}</Text>
-            </Box>
-            <Input
-              key="find"
-              label="Find"
-              placeholder="describe the turn you are looking for"
-              value={query}
-              submitLabel="search"
-              autoFocus
-              onSubmit={(value: string) => {
-                void runFind($, rows, value)
-              }}
-            />
-            <Text color="inactive">{pad(status, width + 4)}</Text>
-            <Text>{pad('', width + 4)}</Text>
-          </Box>
-        )}
       </Box>
     )
   })

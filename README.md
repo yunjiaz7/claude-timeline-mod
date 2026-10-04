@@ -92,11 +92,14 @@ anything else to happen.
 
 ## Search
 
-`/timeline find` opens a search box pinned to the top of the pane, and
+`/timeline find` opens a bordered search box at the top of the pane, and
 `/timeline find` again closes it. Type what you remember of a turn, in any
 words or language, and press Enter: one Haiku call reads every turn's
 summary and prompt and returns the ones that match by meaning, best first.
 The pane then shows only those cards; an empty search shows them all again.
+While the box is open the pane's window does not move: the cards under the
+box are scrolled by the mod, a card per tick, so the box stays where it is
+without being redrawn.
 `/timeline find <words>` opens the box and searches in one step. A search
 costs one small call and nothing is spent until you run one.
 
