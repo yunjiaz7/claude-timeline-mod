@@ -322,10 +322,6 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
   }
 }
 
-async function isPaneOpen($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE)
-}
-
 async function loadStore($: EngineInterface): Promise<string> {
   const storeKey = `timeline:${await $.session.id()}`
   if (!loaded) {
@@ -344,22 +340,9 @@ async function loadStore($: EngineInterface): Promise<string> {
 export const register: Register = on => {
   // A pane is drawn when the engine asks, and new messages are not an ask.
   // Without this the pane sits on whatever the last draw found.
-  on('turn.complete', async ($, e, next) => {
+  on('turn.complete', ($, e, next) => {
     cache = null
     $.ui.invalidate('ui.render')
-
-    // Summarise as you work, but only while the pane is open: a fork re-reads
-    // the whole cached prefix, so one per turn is the costly shape and is only
-    // worth it when someone is actually reading the result.
-    if (await isPaneOpen($)) {
-      const messages = await $.session.messages()
-      if (!('deny' in messages)) {
-        const line = await runFill($, rowsCached(messages), await loadStore($))
-        if (line !== '') {
-          $.ui.log(`timeline: ${line}`, { to: 'debug' })
-        }
-      }
-    }
 
     return next(e)
   })
@@ -464,7 +447,7 @@ export const register: Register = on => {
     // A reload empties the module's own variables while the store keeps its
     // summaries, and a draw can be the first thing to run after one — so the
     // drawing loads them itself rather than trusting a command to have run.
-    await loadStore($)
+    const storeKey = await loadStore($)
     const messages = await $.session.messages()
     if ('deny' in messages) {
       return <Text dimColor>cannot read this session</Text>
@@ -473,6 +456,19 @@ export const register: Register = on => {
     const rows = rowsCached(messages)
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
     const unsummarised = rows.filter(r => summaries[r.key] === undefined).length
+
+    // Drawing the pane is the signal that someone is reading it, and the only
+    // one that holds across a reload, a reopen and a new turn alike. The fill
+    // is not awaited: the tree goes back now with the asks as written, and the
+    // summaries land on the redraw its own invalidate causes. `filling` and
+    // the missing count bound it — once nothing is missing, no fork runs.
+    if (unsummarised > 0 && !filling) {
+      void runFill($, rows, storeKey).then(line => {
+        if (line !== '') {
+          $.ui.log(`timeline: ${line}`)
+        }
+      })
+    }
 
     return (
       <Box flexDirection="column" paddingRight={1}>

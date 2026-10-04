@@ -69,9 +69,11 @@ stored per session and never recomputed. `fill` reports what the call cost:
 fresh input means the prefix had lapsed and that fork paid full price for the
 transcript.
 
-It fills itself while the pane is open: once when you open it, catching up on
-whatever accumulated while it was closed, and then once per turn as you work.
-With the pane closed nothing is spent — a session can run all night unattended
+It fills itself from the draw: drawing the pane is the signal that someone is
+reading it, and the only one that holds across a reload, a reopen and a new
+turn alike. The tree goes back immediately with the asks as written and the
+summaries land on the redraw the fill triggers, so nothing waits on a model.
+With the pane closed nothing is drawn and nothing is spent — a session can run all night unattended
 and cost nothing until you open the pane in the morning, which then summarises
 the whole night in one fork.
 
