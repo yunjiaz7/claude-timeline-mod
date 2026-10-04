@@ -23,6 +23,9 @@ let loaded = false
 // nobody is looking at. Turns arrive one per prompt, already spaced, so each is
 // filled as it lands — there is no burst to debounce.
 let filling = false
+/** Keys a fill tried and could not write. Without this a row the model keeps
+    declining to summarise is retried on every draw, forever, each one paid for. */
+const failed = new Set<string>()
 type Spent = { calls: number; input: number; out: number; quota: number }
 
 /**
@@ -328,7 +331,12 @@ function asText(rows: Row[], store: Record<string, Summary>): string {
  * Resolves a line saying what it cost, or '' when there was nothing to do.
  */
 async function runFill($: EngineInterface, rows: Row[], storeKey: string, language: string): Promise<string> {
-  const missing = rows.filter(r => summaries[r.key] === undefined)
+  // A turn still in flight has no reply to summarise yet — its row exists the
+  // moment the prompt lands, and summarising that is what produced a stream of
+  // `0 of 1` fills over a 159-token prompt. It is picked up on the next draw.
+  const missing = rows.filter(
+    r => summaries[r.key] === undefined && !failed.has(r.key) && r.body.trim() !== '',
+  )
   if (missing.length === 0 || filling) {
     return ''
   }
@@ -358,7 +366,11 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string, langua
     let written = 0
     for (const row of missing) {
       const got = parsed[row.n]
-      if (got !== undefined) {
+      if (got === undefined) {
+        // The model answered but not about this turn. Do not ask again: a row
+        // retried on every draw is a loop that bills for each pass.
+        failed.add(row.key)
+      } else {
         summaries[row.key] = got
         written += 1
       }
@@ -387,9 +399,9 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string, langua
       return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s (${how})`
     }
 
-    // `cache_read` under the fresh input means the prefix had lapsed and this
-    // fork paid full price for the whole transcript.
-    const lapsed = u.cache_read_input_tokens < u.input_tokens
+    // Only a fork has a prefix to lose; `complete` carries no history, so its
+    // cache_read is always zero and the warning would always be wrong.
+    const lapsed = only === undefined && u.cache_read_input_tokens < u.input_tokens
 
     return `summarised ${written} of ${missing.length} in ${seconds.toFixed(1)}s (${how})`
       + ` · ${k(used)} in, ${k(u.output_tokens)} out`
