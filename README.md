@@ -30,8 +30,26 @@ row has been drawn, and otherwise at the turn's first tool row, whose
 requestId is its tool_use_id — read straight from the transcript, so turns
 from before the mod was installed jump too.
 
-The pane is a terminal surface. Remote Control and the desktop app do not
-render plugin panes, so `print` is the form that reaches them.
+## Surfaces
+
+`$.ui.open` reports whether the pane was actually placed, so `/timeline` draws
+a pane where one can be drawn and prints the same rows inline where one cannot
+— naming the reason rather than claiming a pane nobody can see.
+
+| Surface | Pane |
+|---|---|
+| Terminal (>=110 cols) | yes |
+| Desktop app hosting its own session | yes |
+| Desktop / iOS **viewing a session over Remote Control** | no — [#99217](https://github.com/anthropics/claude-code/issues/99217) |
+| VS Code extension | no — [#99045](https://github.com/anthropics/claude-code/issues/99045) |
+| Mobile | no (reports `isFullscreen: false`) |
+
+The engine is surface-agnostic: its `ui_render` accepts `desktop`, `mobile` and
+`vscode`, and `$.ui.resolve(e)` hands each surface its own element table. The
+gap is on the client side — a Remote Control viewer and the VS Code webview
+never attach as a render surface, so nothing a mod draws is requested from
+them. Both are open bugs; nothing a mod can do reaches those views today
+except its text.
 
 ## Summaries
 

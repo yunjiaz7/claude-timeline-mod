@@ -279,35 +279,25 @@ export const register: Register = on => {
       return { text: `timeline: summarised ${written} of ${missing.length} turns.` }
     }
 
-    if (arg !== 'print') {
-      await $.ui.open({ id: PANE, title: 'Timeline' })
-
-      return { text: 'timeline: pane opened' }
-    }
-
-    // Text form, for Remote Control and the desktop app, where panes do not reach.
     if (rows.length === 0) {
       return { text: 'timeline: nothing recorded yet.' }
     }
-    const body = rows
-      .map(r => {
-        const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(r.ask, 68)}`]
-        const summary = r.anchor === undefined ? undefined : summaries[r.anchor]
-        if (summary !== undefined) {
-          lines.push(`      → ${summary}`)
-        }
-        if (r.facts.length > 0) {
-          lines.push(`      ${r.facts.join(' · ')}`)
-        }
-        for (const err of r.errors.slice(0, 2)) {
-          lines.push(`      ⚠ ${head(err, 76)}`)
-        }
 
-        return lines.join('\n')
-      })
-      .join('\n\n')
+    if (arg !== 'print') {
+      const opened = await $.ui.open({ id: PANE, title: 'Timeline' })
+      if (opened.isPlaced) {
+        return { text: 'timeline: pane opened' }
+      }
+      // No pane here: Remote Control and the VS Code extension attach no pane
+      // surface (anthropics/claude-code#99217, #99045), and a narrow terminal
+      // seats none. Say which, and print it rather than report a pane nobody
+      // can see.
+      return {
+        text: `timeline: this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries)}`,
+      }
+    }
 
-    return { text: `timeline · ${rows.length} turns\n\n${body}` }
+    return { text: `timeline · ${rows.length} turns\n\n${asText(rows, summaries)}` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
