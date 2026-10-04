@@ -22,8 +22,20 @@ let loaded = false
 // nobody is looking at. Turns arrive one per prompt, already spaced, so each is
 // filled as it lands — there is no burst to debounce.
 let filling = false
-/** What this session's fills have cost, shown so the spend is never silent. */
-const spent = { calls: 0, input: 0, out: 0, quota: 0 }
+type Spent = { calls: number; input: number; out: number; quota: number }
+
+/**
+ * What this session's fills have cost. Kept in the store, not just in memory:
+ * a reload empties the module and a running total that resets on every reload
+ * is not a running total.
+ */
+let spent: Spent = { calls: 0, input: 0, out: 0, quota: 0 }
+
+function spentLine(): string {
+  return spent.calls === 0
+    ? ''
+    : `${spent.quota.toFixed(1)}% of 5h · ${k(spent.input)} in / ${k(spent.out)} out · ${spent.calls} call${spent.calls > 1 ? 's' : ''}`
+}
 
 const WRITES = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit'])
 
@@ -358,6 +370,10 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
     // the call is what this summary actually took out of the subscription.
     const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
     spent.quota += quota
+    await $.store.set(`${storeKey}:spent`, spent)
+    // The header scrolls away on a long timeline, so the cost rides the pane's
+    // own title, which does not.
+    void $.ui.open({ id: PANE, title: `Timeline · ${spentLine()}` })
     $.ui.invalidate('ui.render')
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
@@ -382,6 +398,8 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string): Promi
 async function loadStore($: EngineInterface): Promise<string> {
   const storeKey = `timeline:${await $.session.id()}`
   if (!loaded) {
+    spent = ((await $.store.get(`${storeKey}:spent`)) as Spent | undefined)
+      ?? { calls: 0, input: 0, out: 0, quota: 0 }
     const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
     // v0 stored one string per turn. Those lack the ask side, so drop them and
     // let a fill write both — a refill is one call, not one per turn.
@@ -483,7 +501,8 @@ const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
     }
 
     if (arg !== 'print') {
-      const opened = await $.ui.open({ id: PANE, title: 'Timeline' })
+      const title = spentLine()
+      const opened = await $.ui.open({ id: PANE, title: title === '' ? 'Timeline' : `Timeline · ${title}` })
       if (opened.isPlaced) {
         // Opening it is the signal that someone wants to read it: catch up on
         // whatever accumulated while it was closed, in one fork.
@@ -536,9 +555,7 @@ const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
         <Text dimColor>
           {rows.length} turns
           {unsummarised > 0 ? ` · ${unsummarised} to summarise` : ''}
-          {spent.calls > 0
-            ? ` · summaries cost ${spent.quota.toFixed(1)}% of 5h · ${k(spent.input)} in / ${k(spent.out)} out over ${spent.calls} call${spent.calls > 1 ? 's' : ''}`
-            : ''}
+          {spent.calls > 0 ? ` · summaries: ${spentLine()}` : ''}
         </Text>
         {rows.length === 0 && <Text dimColor>Nothing yet.</Text>}
         {rows.map(row => {
