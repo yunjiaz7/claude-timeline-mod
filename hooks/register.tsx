@@ -375,7 +375,7 @@ function asText(rows: Row[], store: Record<string, Summary>): string {
       const summary = store[r.key]
       const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
       if (summary !== undefined) {
-        lines.push(`      → ${summary.did}`)
+        lines.push(`      → ${summary.did === '' ? '…' : summary.did}`)
       }
       if (r.facts.length > 0) {
         lines.push(`      ${r.facts.join(' · ')}`)
@@ -743,9 +743,12 @@ export const register: Register = (on, options) => {
                 />
               )}
               {summary !== undefined && (
-                <Text wrap="wrap" dimColor={row.isInjected}>
+                // An ask-only row is written the moment the prompt lands and
+                // upgraded when the reply exists. A bare arrow reads as broken,
+                // so the wait says it is a wait.
+                <Text wrap="wrap" dimColor={summary.did === '' || row.isInjected}>
                   {'  → '}
-                  {summary.did}
+                  {summary.did === '' ? '…' : summary.did}
                 </Text>
               )}
               {row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
