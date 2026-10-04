@@ -153,23 +153,22 @@ are dropped and the next fill rewrites them — one call, not one per turn.
 
 The turn the transcript is showing is marked, and the pane scrolls to keep that
 card in view. Every kind of row reports `onScreen` — the ask, each block of the
-reply, each tool call — so each is mapped to its turn and the earliest turn
-with a row in the viewport is the one marked. Tracking the ask alone marks
-nothing for most of a session: under a long reply no ask is on screen at all.
+reply, each tool call — so each is mapped to its turn, and the earliest turn in
+the latest burst of reports is the one marked.
 
-The engine reports only at the viewport's edges and only on a change, so this
-takes no timer and no polling. The marked turn lives in `$.state`, which
-redraws the pane alone when it changes, and that redraw reuses the rows it
-already has rather than fetching the transcript again. A row reports as soon as
-it is drawn, which for the turn in flight is before the pane has met it, so
-rows are held by what they can be looked up by and resolved each time the
-marker is computed.
+Reports alone are not enough. The engine answers a row's draw from memory when
+its props are ones it has seen, so a row returning to where it was — the bottom
+of the transcript, after a scroll up and a quick one down — calls no hook and
+reports nothing; and a fast scroll unmounts rows without reporting them off.
+So while the pane is open a timer invalidates the draw, which makes every
+mounted row report afresh: every 200ms for a couple of seconds after the
+transcript last moved, then once every three seconds as a net for a move that
+raised no report at all. Closed, nothing runs.
 
-Only the latest burst of reports is trusted. A fast scroll unmounts the rows it
-leaves without reporting them off, so a row still on record is not a row still
-on screen; a scroll step reports both edges together and a jump reports the
-whole new viewport, so the newest burst is always what is actually there. On a surface that does not report
-`onScreen`, nothing is marked.
+The marked turn is plain module state. A render hook may not write `$.state` —
+the engine denies it, drawing is pure — so the pane reads the module's value
+and that same invalidation redraws it. A redraw reuses the rows it already has
+rather than fetching the transcript again.
 
 ## Rows are derived
 

@@ -1,4 +1,3 @@
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
@@ -38,16 +37,12 @@ const askIds = new Map<string, string>()
 /**
  * Which turn the transcript is showing. Every kind of row reports `onScreen` —
  * the ask, each block of the reply, each tool call — so each is mapped to its
- * turn and the earliest turn with a row in the viewport is the one marked.
- * Tracking the ask alone marked nothing for most of a session: under a long
- * reply no ask is on screen at all.
+ * turn and the earliest turn in the latest burst of reports is the one marked.
  *
- * The engine reports only at the viewport's edges and only on a change, so
- * this takes no timer and no polling. The marked turn lives in `$.state`, which
- * redraws the pane alone when it changes, rather than every row of the
- * transcript.
+ * All of it is plain module state. A render hook may not write `$.state` — the
+ * engine denies it, "drawing is pure" — so the marked turn cannot live there;
+ * the pane reads the module's value and is redrawn by the snapshot loop below.
  */
-const markedAtom = atom({ plugin: 'timeline', key: 'marked' } as const, null)
 /**
  * Rows in the viewport, by their own render id, each holding what it can be
  * looked up by rather than a turn number. A row reports the moment it is
@@ -80,7 +75,7 @@ function turnOf(seen: Seen): number | undefined {
   return seen.text === undefined ? undefined : turnOfText.get(seen.text)
 }
 
-function recompute($: EngineInterface): void {
+function recompute(): void {
   let latest = 0
   for (const seen of visible.values()) {
     if (seen.at > latest) {
@@ -101,23 +96,90 @@ function recompute($: EngineInterface): void {
   if (top === undefined || top === markedN) {
     return
   }
-  const now = top
-  markedN = now
-  void update($, markedAtom, () => now)
-  // Keep the marked card inside the pane's own window as well.
-  void $.ui.scroll({ to: { key: `t${now}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
+  markedN = top
 }
 
 function track($: EngineInterface, id: string, os: unknown, by: { tool?: string; text?: string }): void {
   if (os === undefined) {
     return
   }
+  const at = Date.now()
+  if (at >= inducedUntil) {
+    // A report nobody asked for means the transcript is moving.
+    ticksLeft = FAST_TICKS
+    if (waiting !== null) {
+      waiting.cancel()
+      waiting = null
+      step($)
+    }
+  }
   if (os === null) {
     visible.delete(id)
   } else {
-    visible.set(id, { ...by, at: Date.now() })
+    visible.set(id, { ...by, at })
   }
-  recompute($)
+  recompute()
+}
+
+/**
+ * The engine answers a row's draw from memory when its props are ones it has
+ * seen, so a row coming back to where it was — the bottom of the transcript,
+ * after a scroll up and a quick one down — calls no hook and reports nothing.
+ * Reports alone therefore cannot say what is on screen now. Invalidating makes
+ * every mounted row report afresh, which is the whole truth in one burst; the
+ * rows that are gone simply do not answer and age out.
+ *
+ * It runs only while the pane is open: quickly for a few seconds after the
+ * transcript last moved, then once every few seconds as a net for a move that
+ * raised no report at all.
+ */
+const FAST_TICKS = 8
+const FAST_MS = 200
+const SLOW_MS = 3000
+let ticksLeft = 0
+let looping = false
+let waiting: { cancel: () => void } | null = null
+let inducedUntil = 0
+/** The card the pane was last scrolled to, so it is moved only on a change. */
+let scrolledTo: number | null = null
+
+function step($: EngineInterface): void {
+  void $.ui.panes().then(panes => {
+    if (!panes.some(pane => pane.id === PANE)) {
+      looping = false
+      return
+    }
+    const before = markedN
+    inducedUntil = Date.now() + 180
+    $.ui.invalidate('ui.render')
+    $.clock.after(FAST_MS, () => {
+      if (markedN !== before) {
+        ticksLeft = FAST_TICKS
+      }
+      // Out here, not in the draw: keep the marked card inside the pane's own
+      // window as well.
+      if (markedN !== null && markedN !== scrolledTo) {
+        scrolledTo = markedN
+        void $.ui.scroll({ to: { key: `t${markedN}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
+      }
+      if (ticksLeft > 0) {
+        ticksLeft -= 1
+        step($)
+      } else {
+        waiting = $.clock.after(SLOW_MS, () => {
+          waiting = null
+          step($)
+        })
+      }
+    })
+  })
+}
+
+function loop($: EngineInterface): void {
+  if (!looping) {
+    looping = true
+    step($)
+  }
 }
 
 function keyOf(text: string): string {
@@ -708,8 +770,12 @@ async function runFill(
   }
 }
 
+let sessionKey: string | null = null
+
 async function loadStore($: EngineInterface, language: string): Promise<string> {
-  const storeKey = `timeline:${await $.session.id()}`
+  // Asked once: the pane is drawn often and the session does not change.
+  sessionKey ??= `timeline:${await $.session.id()}`
+  const storeKey = sessionKey
   if (!loaded) {
     spent = ((await $.store.get(`${storeKey}:spent`)) as Spent | undefined)
       ?? { calls: 0, input: 0, out: 0, quota: 0 }
@@ -942,8 +1008,9 @@ export const register: Register = (on, options) => {
       size = cache.size
     }
     // The maps may just have caught up with rows that reported before them.
-    recompute($)
-    const nowAt = await read($, markedAtom)
+    recompute()
+    loop($)
+    const nowAt = markedN
     const width = Math.max(24, (e.viewport?.columns ?? 40) - 6)
     // What is left to write, counting a row that has only its ask: the trigger
     // below and the footer both read this, and counting only rows with nothing
