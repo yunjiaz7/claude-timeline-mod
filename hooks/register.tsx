@@ -271,7 +271,7 @@ export function costText(total: Spent, doReplies: boolean): string {
     out: total.out - asks.out - replies.out,
   }
   const line = (name: string, side: Side, note = '') =>
-    `  ${name.padEnd(9)}${String(side.calls).padStart(4)} calls · ${k(side.input)} in / ${k(side.out)} out`
+    `  ${name.padEnd(9)}${String(side.calls).padStart(4)} call${side.calls === 1 ? ' ' : 's'} · ${k(side.input)} in / ${k(side.out)} out`
     + ` · ≈ $${((side.input * USD_IN + side.out * USD_OUT) / 1e6).toFixed(3)}${note}`
 
   return [
@@ -685,7 +685,10 @@ function asText(rows: Row[], store: Record<string, Summary>, doReplies: boolean)
     .map(r => {
       const summary = store[r.key]
       const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
-      const did = summary?.did || (doReplies && summary !== undefined ? pendingOf(r, r.n === rows.length, false) : null)
+      if (!doReplies) {
+        return lines.join('\n')
+      }
+      const did = summary?.did || (summary !== undefined ? pendingOf(r, r.n === rows.length, false) : null)
       if (did) {
         lines.push(`      → ${did}`)
       }
@@ -1108,7 +1111,7 @@ export const register: Register = (on, options) => {
       return {
         text: wantOn
           ? 'timeline: reply summaries on — open the pane to fill them in.'
-          : 'timeline: reply summaries off. Nothing is called for them, and the rows you have are kept.',
+          : 'timeline: replies off. Cards show only what you asked and nothing is spent on replies; what was written is kept for `replies on`.',
       }
     }
 
@@ -1218,8 +1221,11 @@ export const register: Register = (on, options) => {
           // A Button takes a plain string, so the number sits beside it: short
           // and fixed, it cannot wrap and push the ask under itself.
           const askText = head(title, width - cells(mark) - 3)
-          const did = summary?.did
-            || (doReplies && summary !== undefined ? pendingOf(row, row.n === rows.length, filling) : null)
+          // Replies off is also "show me only what I asked": the reply line,
+          // the tally and the errors all go, though what is stored is kept.
+          const did = !doReplies
+            ? null
+            : summary?.did || (summary !== undefined ? pendingOf(row, row.n === rows.length, filling) : null)
 
           return (
             <Box
@@ -1268,14 +1274,14 @@ export const register: Register = (on, options) => {
                   {did}
                 </Text>
               )}
-              {row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
-              {row.errors.slice(0, 2).map((err, i) => (
+              {doReplies && row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
+              {(doReplies ? row.errors : []).slice(0, 2).map((err, i) => (
                 <Text key={`t${row.n}e${i}`} color="error" wrap="wrap">
                   {'  ⚠ '}
                   {head(err, width)}
                 </Text>
               ))}
-              {row.errors.length > 2 && (
+              {doReplies && row.errors.length > 2 && (
                 <Text color="error">{'  ⚠ '}…and {row.errors.length - 2} more</Text>
               )}
             </Box>

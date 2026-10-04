@@ -127,11 +127,12 @@ it. A summary of a failure reads "addressed the issue" far too easily.
 /timeline replies          # what it is now
 ```
 
-or the `Summarise replies` row in `/config`. With it off a row keeps its ask
-summary and its tally of files and commands, and nothing is called for the
-reply side: the list of rows to upgrade is built empty, so the loop that would
-call the model has nothing to iterate. Rows already written are kept, and
-turning it back on fills in what is missing.
+or the `Summarise replies` row in `/config`. With it off a card shows only
+what you asked: the reply line, the tally of files and commands and the errors
+are all hidden, and nothing is called for the reply side — the list of rows to
+upgrade is built empty, so the loop that would call the model has nothing to
+iterate. What was already written stays stored, and turning it back on shows
+it again and fills in what is missing.
 
 ## Language
 
