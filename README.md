@@ -64,7 +64,7 @@ slower half:
 | | Row shows |
 |---|---|
 | No model call possible | your prompt, verbatim |
-| Ask summarised | what you wanted, and `→ summarising…` while the call runs |
+| Ask summarised | what you wanted, and `→ summarising…` while a call runs, `→ waiting…` until one does |
 | Reply summarised | what you wanted, and what it did |
 
 Each step carries more than the last and none of them blocks.

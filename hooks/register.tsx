@@ -375,7 +375,7 @@ function asText(rows: Row[], store: Record<string, Summary>): string {
       const summary = store[r.key]
       const lines = [`${r.isInjected ? '⏱' : '❯'} ${String(r.n).padStart(3)}  ${head(summary?.ask ?? r.ask, 68)}`]
       if (summary !== undefined) {
-        lines.push(`      → ${summary.did === '' ? '…' : summary.did}`)
+        lines.push(`      → ${summary.did === '' ? 'waiting…' : summary.did}`)
       }
       if (r.facts.length > 0) {
         lines.push(`      ${r.facts.join(' · ')}`)
@@ -749,7 +749,7 @@ export const register: Register = (on, options) => {
                 // running, or there is nothing to run it on yet.
                 <Text wrap="wrap" dimColor={summary.did === '' || row.isInjected}>
                   {'  → '}
-                  {summary.did === '' ? (filling ? 'summarising…' : '…') : summary.did}
+                  {summary.did === '' ? (filling ? 'summarising…' : 'waiting…') : summary.did}
                 </Text>
               )}
               {row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
