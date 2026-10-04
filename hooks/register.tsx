@@ -14,7 +14,7 @@ const askIds = new Map<string, string>()
 let cache: { size: number; rows: Row[] } | null = null
 
 // Summaries, by anchor. Written once, read from the store on every load — a
-// fork is the expensive part of this mod and nothing is ever recomputed.
+// summarising is the paid part of this mod, and nothing is recomputed.
 type Summary = { ask: string; did: string }
 let summaries: Record<string, Summary> = {}
 let loaded = false
@@ -23,6 +23,8 @@ let loaded = false
 // nobody is looking at. Turns arrive one per prompt, already spaced, so each is
 // filled as it lands — there is no burst to debounce.
 let filling = false
+/** Rows per summarising call, so a reply never runs past its own cap. */
+const BATCH = 25
 /**
  * How many times a fill tried a row and wrote nothing. A row is given up on
  * after GIVE_UP_AFTER, so a model that keeps declining one is not paid for on
@@ -42,8 +44,7 @@ function missed(key: string): void {
 /**
  * The transcript size at the last attempt. A draw happens for many reasons and
  * most change nothing, so a fill that failed must not be retried until there is
- * something new to try it on — a resumed session has no forkable thread until
- * its first turn ends, and without this it asks again on every redraw.
+ * something new to try it on, rather than on every redraw.
  */
 let triedAt = -1
 type Spent = { calls: number; input: number; out: number; quota: number }
@@ -258,35 +259,6 @@ function rowsCached(messages: readonly SessionMessage[]): Row[] {
   return cache.rows
 }
 
-/**
- * The fork sees the whole conversation, so it is asked for every missing turn
- * at once: one call amortizes the cached-prefix read over all of them, where
- * one call per turn would pay that read again each time.
- */
-function fillPrompt(rows: Row[], language: string): string {
-  const asked = rows.map(r => `${r.n}. ${head(r.ask, 110)}`).join('\n')
-
-  return [
-    'For each turn below, write two things: what I asked, and what YOU did about it.',
-    '',
-    'Output one line per turn, nothing else. No preamble, no closing line, no markdown:',
-    '<number>|<my ask in up to 10 words>|<what you did in up to 16 words, past tense>',
-    '',
-    'The ask side is the point of the turn, not its wording — say what I wanted,',
-    'not how I phrased it. The did side names the concrete thing: the file, the',
-    'fix, the finding, the number. A turn that only talked still did something:',
-    'say what was decided or explained.',
-    '',
-    'If a turn failed, stalled or was abandoned, say so plainly — never smooth a',
-    'failure into an accomplishment.',
-    '',
-    `Write both fields in ${language}, whatever language the turn itself is in.`,
-    '',
-    'Turns:',
-    asked,
-  ].join('\n')
-}
-
 /** The single-turn prompt, for `complete`, which sees only what it is given. */
 function onePrompt(row: Row, language: string): string {
   return [
@@ -308,9 +280,8 @@ function onePrompt(row: Row, language: string): string {
 }
 
 /**
- * The asks alone, for turns whose reply is not available: still in flight, or
- * in a resumed session with no forkable thread. A prompt is always there, so a
- * row can always say what it was for even when it cannot say what came of it.
+ * The asks alone. A prompt is there the moment it is sent, so a row can say
+ * what it was for long before it can say what came of it.
  */
 function asksPrompt(rows: Row[], language: string): string {
   return [
@@ -328,8 +299,7 @@ function asksPrompt(rows: Row[], language: string): string {
 
 /**
  * Several turns with their replies, for `complete`, which sees only what it is
- * given. Used where a fork cannot run; each body is trimmed hard so a whole
- * backlog still fits one call.
+ * given. Each body is trimmed to share the call's budget.
  */
 function batchPrompt(rows: Row[], language: string): string {
   const each = Math.max(300, Math.floor(60000 / Math.max(1, rows.length)))
@@ -403,7 +373,7 @@ function asText(rows: Row[], store: Record<string, Summary>): string {
 }
 
 /**
- * Summarise every turn that has none, in one fork, and store the result.
+ * Summarise every turn that has none, and store the result.
  * Resolves a line saying what it cost, or '' when there was nothing to do.
  */
 async function runFill(
@@ -442,7 +412,6 @@ async function runFill(
   const before = quotaOf(await $.session.usage())
   try {
     let written = 0
-    let fellBack: Row[] = []
     const usages: ({ input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined)[] = []
 
     // The asks go first and the pane is redrawn the moment they land: they are
@@ -471,86 +440,39 @@ async function runFill(
       }
     }
 
+    // Every batch goes to `complete`: it takes an explicit output cap, and a
+    // fork does not. A fork answering 61 rows ran past the default cap, lost
+    // every line after it, counted those rows as failures and re-read the
+    // whole prefix to fail again — 33 calls and two million tokens for a
+    // timeline that stayed at `waiting…`. `complete` is also what the measured
+    // cost argued for: 3.8k tokens against a fork's 414k.
     const full = upgradable()
-    // One missing turn is given to `complete`, which carries no history: it
-    // reads that turn alone. A fork would re-read the whole transcript to
-    // write one line, and the prefix read is what a fork costs — about forty
-    // times this on a long session. Several go the other way: one fork
-    // amortizes that read across all of them.
-    const only = full.length === 1 ? full[0] : undefined
-    if (full.length > 0) {
-      const reply = only === undefined
-        ? await $.model.fork({ prompt: fillPrompt(full, language) })
-        : await $.model.complete({
-            model: 'haiku',
-            effort: 'low',
-            maxTokens: 200,
-            prompt: onePrompt(only, language),
-          })
-      if (reply.isAnswered) {
-        usages.push(reply.usage)
-        const parsed = parseFill(reply.text)
-        for (const row of full) {
-          const got = parsed[row.n]
-          if (got === undefined) {
-            missed(row.key)
-          } else {
-            summaries[row.key] = got
-            written += 1
-          }
-        }
-      } else if (reply.reason === 'nothing-to-fork') {
-        // A resumed session has no thread to fork until its own first turn
-        // ends — but the replies are in the transcript either way, so ask the
-        // same question a way that needs no history rather than settle for
-        // less. Only a turn with nothing written yet falls back to ask-only.
-        const second = await $.model.complete({
-          model: 'haiku',
-          effort: 'low',
-          maxTokens: Math.min(8000, 100 + full.length * 45),
-          prompt: batchPrompt(full, language),
-        })
-        if (second.isAnswered) {
-          usages.push(second.usage)
-          const parsed = parseFill(second.text)
-          for (const row of full) {
-            const got = parsed[row.n]
-            if (got === undefined) {
-              missed(row.key)
-            } else {
-              summaries[row.key] = got
-              written += 1
-            }
-          }
-        } else {
-          fellBack = full
-        }
-      } else {
-        for (const row of full) {
-          missed(row.key)
-        }
-      }
-    }
-
-    const asks = fellBack
-    if (asks.length > 0) {
+    // Chunked so a reply always fits its cap, whatever the backlog.
+    for (let at = 0; at < full.length; at += BATCH) {
+      const chunk = full.slice(at, at + BATCH)
       const reply = await $.model.complete({
         model: 'haiku',
         effort: 'low',
-        maxTokens: Math.min(4000, 40 + asks.length * 30),
-        prompt: asksPrompt(asks, language),
+        maxTokens: 200 + chunk.length * 60,
+        prompt: chunk.length === 1 && chunk[0] !== undefined
+          ? onePrompt(chunk[0], language)
+          : batchPrompt(chunk, language),
       })
-      if (reply.isAnswered) {
-        usages.push(reply.usage)
-        const parsed = parseAsks(reply.text)
-        for (const row of asks) {
-          const got = parsed[row.n]
-          if (got !== undefined) {
-            // `did` stays empty: the row is written but still open, and a
-            // later fill upgrades it once the reply exists.
-            summaries[row.key] = { ask: got, did: '' }
-            written += 1
-          }
+      if (!reply.isAnswered) {
+        for (const row of chunk) {
+          missed(row.key)
+        }
+        continue
+      }
+      usages.push(reply.usage)
+      const parsed = parseFill(reply.text)
+      for (const row of chunk) {
+        const got = parsed[row.n]
+        if (got === undefined) {
+          missed(row.key)
+        } else {
+          summaries[row.key] = got
+          written += 1
         }
       }
     }
@@ -711,7 +633,7 @@ export const register: Register = (on, options) => {
       const opened = await $.ui.open({ id: PANE, title: title === '' ? 'Timeline' : `Timeline · ${title}` })
       if (opened.isPlaced) {
         // Opening it is the signal that someone wants to read it: catch up on
-        // whatever accumulated while it was closed, in one fork.
+        // whatever accumulated while it was closed.
         const line = await runFill($, rows, storeKey, language, messages.length)
 
         return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
@@ -747,7 +669,7 @@ export const register: Register = (on, options) => {
     // one that holds across a reload, a reopen and a new turn alike. The fill
     // is not awaited: the tree goes back now with the asks as written, and the
     // summaries land on the redraw its own invalidate causes. `filling` and
-    // the missing count bound it — once nothing is missing, no fork runs.
+    // the missing count bound it — once nothing is missing, no call runs.
     if (unsummarised > 0 && !filling) {
       void runFill($, rows, storeKey, language, messages.length).then(line => {
         if (line !== '') {

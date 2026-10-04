@@ -95,35 +95,16 @@ With the pane closed nothing is drawn and nothing is spent — a session can run
 and cost nothing until you open the pane in the morning, which then summarises
 the whole night in one fork.
 
-Which call it makes depends on how far behind it is, because the two cost
-very differently:
+Every call is `$.model.complete` on Haiku, which carries no history and reads
+only what it is handed — the ask alone for a row with no summary yet, the turn
+with its reply for one being upgraded — and takes an explicit output cap.
 
-- **One turn missing** — `$.model.complete` on Haiku, given that turn alone.
-  It carries no history, so it reads only what it is handed: a few thousand
-  tokens. This is the live case, and it is roughly forty times cheaper than
-  the alternative on a long session.
-- **Several missing** — one `$.model.fork`, which re-reads the whole cached
-  transcript once and writes every missing line from it.
-- **A fork that cannot run** — a resumed session has no thread to fork until
-  its own first turn ends. The replies are in the transcript either way, so
-  the same question goes to one `complete` with each turn's reply trimmed to
-  fit, rather than settling for less.
-- **No reply at all** — a turn still running: the ask is there and the reply
-  is not, so one `complete` over those asks writes the ask side alone. Such a
-  row stays open and a later fill upgrades it once the reply exists. The prefix read is
-  what a fork costs and it does not shrink with the work, so it is worth
-  paying once across many turns and never once per turn. Measured over 35
-  turns on a 414k-token session: 414.3k cached + 1.8k fresh in, 4.9k out.
-
-A row that a fill writes nothing for is tried three times across three turns
-before it is given up on, since most failures are transient — a rate limit, an
-interrupted turn, a reply that parsed badly. `/timeline fill` resets the count.
-
-A fill runs at most once per new turn: a draw happens for many reasons and
-most change nothing, so one that failed is not retried until the transcript
-has grown. A resumed session has no forkable thread until its own first turn
-ends — without that gate it asks again on every redraw. `/timeline fill`
-ignores the gate and retries whatever an automatic fill gave up on.
+Batches are chunked so a reply always fits that cap. A fork was used for them
+once and is not any more: it takes no cap, so one answering 61 rows ran past
+the default, lost every line after it, counted those rows as failures and
+re-read the whole cached prefix to fail again — 33 calls and two million
+tokens for a timeline that stayed unwritten. It is also what the measured cost
+argued against: 3.8k tokens for 118 asks, against 414k for one fork.
 
 Both report what they took: elapsed time, tokens, and the share of the
 five-hour window the call moved, which is what a subscription actually
