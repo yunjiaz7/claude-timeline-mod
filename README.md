@@ -88,8 +88,7 @@ anything else to happen.
 ## Summaries
 
 Each turn gets both halves — what you asked and what it did. Results are
-stored per session and never recomputed, and every fill reports what it took:
-seconds, tokens in and out, and the share of the five-hour window it moved.
+stored per session and never recomputed.
 
 It fills itself from the draw: drawing the pane is the signal that someone is
 reading it, and the only one that holds across a reload, a reopen and a new
@@ -110,10 +109,9 @@ re-read the whole cached prefix to fail again — 33 calls and two million
 tokens for a timeline that stayed unwritten. It is also what the measured cost
 argued against: 3.8k tokens for 118 asks, against 414k for one fork.
 
-Both report what they took: elapsed time, tokens, and the share of the
-five-hour window the call moved, which is what a subscription actually
-spends. The pane header carries the running total, and `/timeline fill`
-forces a fill by hand.
+The pane shows no cost. `/timeline fill` forces a fill by hand and reports
+what it took and the running total: tokens in and out, and the share of the
+five-hour window the calls moved, which is what a subscription actually spends.
 
 What the model writes sits beside what the transcript recorded, never instead
 of it: the command tally stays, and an error is printed as the tool reported

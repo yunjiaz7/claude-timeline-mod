@@ -825,9 +825,6 @@ async function runFill(
     const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
     spent.quota += quota
     await $.store.set(`${storeKey}:spent`, spent)
-    // The header scrolls away on a long timeline, so the cost rides the pane's
-    // own title, which does not.
-    void $.ui.open({ id: PANE, title: `Timeline · ${spentLine()}` })
     $.ui.invalidate('ui.render')
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
@@ -1074,15 +1071,16 @@ export const register: Register = (on, options) => {
     if (verb === 'fill') {
       const line = await runFill($, rows, storeKey, language, messages.length, doReplies, true)
 
-      return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}` }
+      const total = spent.calls > 0 ? ` Total so far: ${spentLine()}` : ''
+
+      return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}${total}` }
     }
 
     if (rows.length === 0) {
       return { text: 'timeline: nothing recorded yet.' }
     }
 
-    const title = spentLine()
-    const opened = await $.ui.open({ id: PANE, title: title === '' ? 'Timeline' : `Timeline · ${title}` })
+    const opened = await $.ui.open({ id: PANE, title: 'Timeline' })
     if (opened.isPlaced) {
       // Opening it is the signal that someone wants to read it: catch up on
       // whatever accumulated while it was closed.
@@ -1141,12 +1139,7 @@ export const register: Register = (on, options) => {
     // summaries land on the redraw its own invalidate causes. `filling` and
     // the missing count bound it — once nothing is missing, no call runs.
     if (unsummarised > 0 && !filling) {
-      void runFill($, rows, storeKey, language, size, doReplies).then(line => {
-        // Only a fill you asked for reports coming back empty.
-        if (line.startsWith('summarised')) {
-          $.ui.log(`timeline: ${line}`)
-        }
-      })
+      void runFill($, rows, storeKey, language, size, doReplies)
     }
 
     return (
@@ -1225,13 +1218,13 @@ export const register: Register = (on, options) => {
             </Box>
           )
         })}
-        {/* The count and the spend sit under the rows: the newest turn is at
-            the foot of the list, so that is where the eye already is. */}
+        {/* The count sits under the rows: the newest turn is at the foot of
+            the list, so that is where the eye already is. What the summaries
+            cost is not shown here; `/timeline fill` reports it on request. */}
         <Text dimColor>
           {'\n'}
           {rows.length} turns
           {unsummarised > 0 ? ` · ${unsummarised} to summarise` : ''}
-          {spent.calls > 0 ? ` · ${spentLine()}` : ''}
         </Text>
       </Box>
     )
