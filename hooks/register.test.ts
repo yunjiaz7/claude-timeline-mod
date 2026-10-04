@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
+import { cells, chunksOf, parseAsks, parseFill, pendingOf, resolveLanguage, resolveVerb, rowsOf, tintOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -151,4 +151,9 @@ test('pendingOf waits only on the newest row and summarises only a row with a re
   expect(pendingOf(row(''), false, true)).toBe(null)
   expect(pendingOf(row('done'), false, true)).toBe('summarising…')
   expect(pendingOf(row('done'), false, false)).toBe(null)
+})
+
+test('chunksOf cuts a list into runs of the given size', () => {
+  expect(chunksOf([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]])
+  expect(chunksOf([], 2)).toEqual([])
 })

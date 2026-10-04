@@ -664,6 +664,24 @@ function asText(rows: Row[], store: Record<string, Summary>, doReplies: boolean)
  * Summarise every turn that has none, and store the result.
  * Resolves a line saying what it cost, or '' when there was nothing to do.
  */
+export function chunksOf<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let at = 0; at < items.length; at += size) {
+    out.push(items.slice(at, at + size))
+  }
+
+  return out
+}
+
+const WAVE = 4
+
+/** Runs `work` over the chunks, `WAVE` at a time, so a backlog cannot open a call per chunk at once. */
+async function inWaves<T>(chunks: T[][], work: (chunk: T[]) => Promise<void>): Promise<void> {
+  for (const wave of chunksOf(chunks, WAVE)) {
+    await Promise.all(wave.map(work))
+  }
+}
+
 async function runFill(
   $: EngineInterface,
   rows: Row[],
@@ -707,33 +725,40 @@ async function runFill(
     let written = 0
     const usages: ({ input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined)[] = []
 
-    // The asks go first and the pane is redrawn the moment they land: they are
-    // short, they need no reply, and they are what turns a raw prompt into a
-    // line you can read while the turn is still running.
-    if (asksOnly.length > 0) {
+    // One call writing a hundred lines made a first open wait for the last
+    // line before showing the first. The backlog goes out in chunks, a few at
+    // a time and the newest first, and each chunk is drawn as it lands.
+    const land = async () => {
+      await $.store.set(storeKey, summaries)
+      cache = null
+      $.ui.invalidate('ui.render')
+    }
+
+    // The asks go first: they are short, they need no reply, and they are
+    // what turns a raw prompt into a line you can read while the turn runs.
+    await inWaves(chunksOf([...asksOnly].reverse(), BATCH), async chunk => {
       const reply = await $.model.complete({
         model: 'haiku',
         effort: 'low',
-        maxTokens: Math.min(4000, 40 + asksOnly.length * 30),
-        prompt: asksPrompt(asksOnly, language),
+        maxTokens: 40 + chunk.length * 30,
+        prompt: asksPrompt(chunk, language),
       })
-      if (reply.isAnswered) {
-        usages.push(reply.usage)
-        const parsed = parseAsks(reply.text)
-        for (const row of asksOnly) {
-          const got = parsed[row.n]
-          if (got === undefined) {
-            missed(row.key)
-          } else {
-            summaries[row.key] = { ask: got, did: '' }
-            written += 1
-          }
-        }
-        await $.store.set(storeKey, summaries)
-        cache = null
-        $.ui.invalidate('ui.render')
+      if (!reply.isAnswered) {
+        return
       }
-    }
+      usages.push(reply.usage)
+      const parsed = parseAsks(reply.text)
+      for (const row of chunk) {
+        const got = parsed[row.n]
+        if (got === undefined) {
+          missed(row.key)
+        } else {
+          summaries[row.key] = { ask: got, did: '' }
+          written += 1
+        }
+      }
+      await land()
+    })
 
     // Every batch goes to `complete`: it takes an explicit output cap, and a
     // fork does not. A fork answering 61 rows ran past the default cap, lost
@@ -742,9 +767,7 @@ async function runFill(
     // timeline that stayed at `waiting…`. `complete` is also what the measured
     // cost argued for: 3.8k tokens against a fork's 414k.
     const full = upgradable()
-    // Chunked so a reply always fits its cap, whatever the backlog.
-    for (let at = 0; at < full.length; at += BATCH) {
-      const chunk = full.slice(at, at + BATCH)
+    await inWaves(chunksOf([...full].reverse(), BATCH), async chunk => {
       const reply = await $.model.complete({
         model: 'haiku',
         effort: 'low',
@@ -757,7 +780,8 @@ async function runFill(
         for (const row of chunk) {
           missed(row.key)
         }
-        continue
+
+        return
       }
       usages.push(reply.usage)
       const parsed = parseFill(reply.text)
@@ -770,7 +794,8 @@ async function runFill(
           written += 1
         }
       }
-    }
+      await land()
+    })
 
     if (written === 0) {
       return 'nothing to summarise yet'
@@ -1138,10 +1163,14 @@ export const register: Register = (on, options) => {
               backgroundColor={row.n === nowAt ? tint : undefined}
             >
               <Box flexDirection="row">
-                <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
-                  {mark}
-                  {'  '}
-                </Text>
+                {/* A raw prompt can measure wider than `cells` counted it; held
+                    at its own width, the number is not what gives way. */}
+                <Box flexShrink={0}>
+                  <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
+                    {mark}
+                    {'  '}
+                  </Text>
+                </Box>
                 {id === undefined ? (
                   <Text wrap="truncate-end" dimColor={row.isInjected}>{askText}</Text>
                 ) : (
