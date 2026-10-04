@@ -424,10 +424,16 @@ async function runFill(
   // first and the reply side upgrades it later. Waiting for the reply to write
   // either is what left a new row showing its raw prompt for a whole turn.
   const asksOnly = rows.filter(r => !isSpent(r.key) && summaries[r.key] === undefined)
-  const full = rows.filter(
-    r => !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '',
-  )
-  if ((full.length === 0 && asksOnly.length === 0) || filling) {
+  // Recomputed after the asks are written: a row the ask pass just created is
+  // one this pass should upgrade in the same run. Taking it before meant the
+  // list was always empty on a first fill, and every row sat at `waiting…`
+  // until something else happened to trigger another.
+  const upgradable = () =>
+    rows.filter(r => !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '')
+  if (asksOnly.length === 0 && upgradable().length === 0) {
+    return ''
+  }
+  if (filling) {
     return ''
   }
   filling = true
@@ -465,6 +471,7 @@ async function runFill(
       }
     }
 
+    const full = upgradable()
     // One missing turn is given to `complete`, which carries no history: it
     // reads that turn alone. A fork would re-read the whole transcript to
     // write one line, and the prefix read is what a fork costs — about forty

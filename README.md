@@ -70,7 +70,9 @@ slower half:
 Each step carries more than the last and none of them blocks. The ask is
 always written first, in its own short call, and the pane is redrawn the
 moment it lands — a row never sits showing its raw prompt while the turn it
-opened is still running.
+opened is still running. The reply pass follows in the same run, over the rows
+the ask pass just created, so a row reaches its full form without waiting for
+anything else to happen.
 
 ## Summaries
 
