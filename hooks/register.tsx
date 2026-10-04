@@ -347,7 +347,7 @@ function batchPrompt(rows: Row[], language: string): string {
   ].join('\n')
 }
 
-export const VERBS = ['help', 'fill', 'print', 'lang', 'replies', 'close'] as const
+export const VERBS = ['help', 'fill', 'lang', 'replies', 'close'] as const
 
 function distance(a: string, b: string): number {
   let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
@@ -657,7 +657,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
-      description: 'What this session did — `fill`, `print`, `lang`, `replies on|off`, `close`',
+      description: 'What this session did — `fill`, `lang`, `replies on|off`, `close`',
     })
 
     return next(e)
@@ -676,7 +676,6 @@ export const register: Register = (on, options) => {
           '',
           '  /timeline                 open the pane (or print it where none can be drawn)',
           '  /timeline fill            summarise everything missing now',
-          '  /timeline print           the same rows as a message',
           '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
           '  /timeline replies on|off  write the reply side, or only the ask',
           '  /timeline close',
@@ -766,26 +765,22 @@ export const register: Register = (on, options) => {
       return { text: 'timeline: nothing recorded yet.' }
     }
 
-    if (verb !== 'print') {
-      const title = spentLine()
-      const opened = await $.ui.open({ id: PANE, title: title === '' ? 'Timeline' : `Timeline · ${title}` })
-      if (opened.isPlaced) {
-        // Opening it is the signal that someone wants to read it: catch up on
-        // whatever accumulated while it was closed.
-        const line = await runFill($, rows, storeKey, language, messages.length, doReplies)
+    const title = spentLine()
+    const opened = await $.ui.open({ id: PANE, title: title === '' ? 'Timeline' : `Timeline · ${title}` })
+    if (opened.isPlaced) {
+      // Opening it is the signal that someone wants to read it: catch up on
+      // whatever accumulated while it was closed.
+      const line = await runFill($, rows, storeKey, language, messages.length, doReplies)
 
-        return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
-      }
-      // No pane here: Remote Control and the VS Code extension attach no pane
-      // surface (anthropics/claude-code#99217, #99045), and a narrow terminal
-      // seats none. Say which, and print it rather than report a pane nobody
-      // can see.
-      return {
-        text: `timeline: this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries, doReplies)}`,
-      }
+      return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
     }
-
-    return { text: `timeline · ${rows.length} turns\n\n${asText(rows, summaries, doReplies)}` }
+    // No pane here: Remote Control and the VS Code extension attach no pane
+    // surface (anthropics/claude-code#99217, #99045), and a narrow terminal
+    // seats none. Say which, and print it rather than report a pane nobody
+    // can see.
+    return {
+      text: `timeline: this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries, doReplies)}`,
+    }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

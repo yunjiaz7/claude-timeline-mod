@@ -13,7 +13,6 @@ the morning.
 /timeline help    # every command, and what the settings are now
 /timeline         # open the pane (docks right of the transcript)
 /timeline fill    # summarise the turns that have none yet
-/timeline print   # same thing as a message
 /timeline close
 ```
 
@@ -40,7 +39,9 @@ from before the mod was installed jump too.
 
 `$.ui.open` reports whether the pane was actually placed, so `/timeline` draws
 a pane where one can be drawn and prints the same rows inline where one cannot
-— naming the reason rather than claiming a pane nobody can see.
+— naming the reason rather than claiming a pane nobody can see. There is no
+separate print command: the only case that needed one is the case that answers
+itself.
 
 | Surface | Pane |
 |---|---|
