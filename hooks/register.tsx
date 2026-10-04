@@ -796,6 +796,19 @@ async function runFill(
 
 let sessionKey: string | null = null
 
+// The theme has no warm fill of its own, so the marked card takes a tint of
+// the accent picked by theme name; any other theme keeps the theme's own key.
+let tint = 'userMessageBackground'
+let isTinted = false
+
+async function loadTint($: EngineInterface): Promise<void> {
+  if (isTinted) return
+  isTinted = true
+  const theme = String((await $.config.list()).find(row => row.key === 'theme')?.value ?? '')
+  if (theme.startsWith('light') && !theme.includes('ansi')) tint = 'rgb(252,236,226)'
+  else if (theme.startsWith('dark') && !theme.includes('ansi')) tint = 'rgb(66,46,38)'
+}
+
 async function loadStore($: EngineInterface, language: string): Promise<string> {
   // Asked once: the pane is drawn often and the session does not change.
   sessionKey ??= `timeline:${await $.session.id()}`
@@ -1015,6 +1028,7 @@ export const register: Register = (on, options) => {
     // summaries, and a draw can be the first thing to run after one — so the
     // drawing loads them itself rather than trusting a command to have run.
     const storeKey = await loadStore($, language)
+    await loadTint($)
     // The transcript is fetched only when a turn or a fill has changed it. A
     // redraw because the marker moved reuses the rows it already has, so
     // scrolling does not pull the whole session across on every step.
@@ -1080,6 +1094,10 @@ export const register: Register = (on, options) => {
               borderStyle="round"
               borderColor={row.n === nowAt ? 'claude' : 'promptBorder'}
               borderDimColor={row.n !== nowAt}
+              // The one card you are at takes the fill the transcript gives
+              // your own prompts — a theme key, so it follows the theme. Only
+              // that card: a fill on every card marks nothing.
+              backgroundColor={row.n === nowAt ? tint : undefined}
             >
               <Box flexDirection="row">
                 <Text color={row.isInjected ? undefined : 'claude'} dimColor={row.isInjected} bold>
