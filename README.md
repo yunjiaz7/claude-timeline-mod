@@ -56,6 +56,19 @@ never attach as a render surface, so nothing a mod draws is requested from
 them. Both are open bugs; nothing a mod can do reaches those views today
 except its text.
 
+## What a row shows, and when
+
+A prompt lands instantly and a reply does not, so a row never waits on the
+slower half:
+
+| | Row shows |
+|---|---|
+| No model call possible | your prompt, verbatim |
+| Ask summarised | what you wanted, and `→ summarising…` while the call runs |
+| Reply summarised | what you wanted, and what it did |
+
+Each step carries more than the last and none of them blocks.
+
 ## Summaries
 
 `fill` runs one `$.model.fork` — a completion over this session's own

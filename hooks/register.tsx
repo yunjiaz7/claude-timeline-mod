@@ -745,10 +745,11 @@ export const register: Register = (on, options) => {
               {summary !== undefined && (
                 // An ask-only row is written the moment the prompt lands and
                 // upgraded when the reply exists. A bare arrow reads as broken,
-                // so the wait says it is a wait.
+                // so a row still waiting says which wait it is in: a call is
+                // running, or there is nothing to run it on yet.
                 <Text wrap="wrap" dimColor={summary.did === '' || row.isInjected}>
                   {'  → '}
-                  {summary.did === '' ? '…' : summary.did}
+                  {summary.did === '' ? (filling ? 'summarising…' : '…') : summary.did}
                 </Text>
               )}
               {row.facts.length > 0 && <Text dimColor>{'  '}{row.facts.join(' · ')}</Text>}
