@@ -10,6 +10,7 @@ the morning.
 ## Use
 
 ```
+/timeline help    # every command, and what the settings are now
 /timeline         # open the pane (docks right of the transcript)
 /timeline fill    # summarise the turns that have none yet
 /timeline print   # same thing as a message

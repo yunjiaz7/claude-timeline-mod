@@ -2,6 +2,32 @@ import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
 const LANGUAGES = ['English', '中文', '日本語', 'Español', 'Français', 'Deutsch'] as const
+const LANG_ALIAS: Record<string, string> = {
+  en: 'English', zh: '中文', cn: '中文', chinese: '中文',
+  ja: '日本語', jp: '日本語', japanese: '日本語',
+  es: 'Español', spanish: 'Español',
+  fr: 'Français', french: 'Français',
+  de: 'Deutsch', german: 'Deutsch',
+}
+
+/** A language name, its code, or the start of either. */
+export function resolveLanguage(want: string): string | null {
+  const w = want.trim().toLowerCase()
+  if (w === '') {
+    return null
+  }
+  const alias = LANG_ALIAS[w]
+  if (alias !== undefined) {
+    return alias
+  }
+  const exact = LANGUAGES.find(l => l.toLowerCase() === w)
+  if (exact !== undefined) {
+    return exact
+  }
+  const byPrefix = LANGUAGES.filter(l => l.toLowerCase().startsWith(w))
+
+  return byPrefix.length === 1 ? byPrefix[0] ?? null : null
+}
 
 // A message row's own render id, seen only while that row is drawn. Preferred
 // as a jump target because it lands on the ask; `anchor` (the turn's first tool
@@ -321,6 +347,61 @@ function batchPrompt(rows: Row[], language: string): string {
   ].join('\n')
 }
 
+export const VERBS = ['help', 'fill', 'print', 'lang', 'replies', 'close'] as const
+
+function distance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i]
+    for (let j = 1; j <= b.length; j += 1) {
+      row[j] = Math.min(
+        (prev[j] ?? 0) + 1,
+        (row[j - 1] ?? 0) + 1,
+        (prev[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      )
+    }
+    prev = row
+  }
+
+  return prev[b.length] ?? 0
+}
+
+/**
+ * The verb a word meant. Exact first, then an unambiguous prefix, then the
+ * nearest within two edits — a command you can only reach by spelling it
+ * exactly is a command you have to keep looking up.
+ */
+export function resolveVerb(word: string): string | null {
+  const w = word.toLowerCase()
+  if (w === '') {
+    return null
+  }
+  if ((VERBS as readonly string[]).includes(w)) {
+    return w
+  }
+  const byPrefix = VERBS.filter(v => v.startsWith(w))
+  if (byPrefix.length === 1) {
+    return byPrefix[0] ?? null
+  }
+  // The other direction too: a word that opens with a verb and then goes wrong
+  // (`langauge`, `filll`) is further than two edits but perfectly clear.
+  const opensWith = VERBS.find(v => w.startsWith(v))
+  if (opensWith !== undefined) {
+    return opensWith
+  }
+  let best: string | null = null
+  let bestAt = 3
+  for (const v of VERBS) {
+    const d = distance(w, v)
+    if (d < bestAt) {
+      bestAt = d
+      best = v
+    }
+  }
+
+  return best
+}
+
 export function parseAsks(text: string): Record<number, string> {
   const out: Record<number, string> = {}
   for (const line of text.split('\n')) {
@@ -584,20 +665,41 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'timeline' }, async ($, e) => {
     const arg = (e.args ?? '').trim()
+    const word = arg.split(/\s+/)[0] ?? ''
+    const rest = arg.slice(word.length).trim()
+    const verb = resolveVerb(word)
+
+    if (verb === 'help' || (word !== '' && verb === null)) {
+      return {
+        text: [
+          'timeline — what this session actually did, turn by turn.',
+          '',
+          '  /timeline                 open the pane (or print it where none can be drawn)',
+          '  /timeline fill            summarise everything missing now',
+          '  /timeline print           the same rows as a message',
+          '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
+          '  /timeline replies on|off  write the reply side, or only the ask',
+          '  /timeline close',
+          '',
+          `  now: ${language} · replies ${doReplies ? 'on' : 'off'}`,
+          '  a near miss is accepted: /timeline fil, /timeline lng, /timeline rep',
+        ].join('\n'),
+      }
+    }
 
     // `/config` lists every mod's options in one place, which is where they
     // belong; a mod with its own command should also answer for its own
     // setting. Both write the same row, so there is one source of truth.
-    if (arg === 'lang' || arg.startsWith('lang ')) {
-      const want = arg.slice(4).trim()
+    if (verb === 'lang') {
+      const want = rest
       if (want === '') {
         return {
           text: `timeline: summaries are in ${language}.`
             + `\n  /timeline lang <${LANGUAGES.join(' | ')}>`,
         }
       }
-      const picked = LANGUAGES.find(l => l.toLowerCase() === want.toLowerCase())
-      if (picked === undefined) {
+      const picked = resolveLanguage(want)
+      if (picked === null) {
         return { text: `timeline: no such language. One of: ${LANGUAGES.join(', ')}` }
       }
       if (picked === language) {
@@ -613,8 +715,8 @@ export const register: Register = (on, options) => {
       return { text: `timeline: summaries will be written in ${picked} — open the pane to rewrite them.` }
     }
 
-    if (arg === 'replies' || arg.startsWith('replies ')) {
-      const want = arg.slice(7).trim().toLowerCase()
+    if (verb === 'replies') {
+      const want = rest.toLowerCase()
       if (want === '') {
         return {
           text: `timeline: reply summaries are ${doReplies ? 'on' : 'off'}.`
@@ -641,7 +743,7 @@ export const register: Register = (on, options) => {
       }
     }
 
-    if (arg === 'close') {
+    if (verb === 'close') {
       await $.ui.close({ id: PANE })
 
       return { text: 'timeline: closed' }
@@ -654,7 +756,7 @@ export const register: Register = (on, options) => {
     const rows = rowsCached(messages)
     const storeKey = await loadStore($, language)
 
-    if (arg === 'fill') {
+    if (verb === 'fill') {
       const line = await runFill($, rows, storeKey, language, messages.length, doReplies, true)
 
       return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}` }
@@ -664,7 +766,7 @@ export const register: Register = (on, options) => {
       return { text: 'timeline: nothing recorded yet.' }
     }
 
-    if (arg !== 'print') {
+    if (verb !== 'print') {
       const title = spentLine()
       const opened = await $.ui.open({ id: PANE, title: title === '' ? 'Timeline' : `Timeline · ${title}` })
       if (opened.isPlaced) {

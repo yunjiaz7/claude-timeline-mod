@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cells, parseAsks, parseFill, rowsOf, verbOf } from './register'
+import { cells, parseAsks, parseFill, resolveLanguage, resolveVerb, rowsOf, verbOf } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -56,14 +56,14 @@ test('rowsOf opens a row per sent message and attributes the work after it', () 
   ])
 
   expect(rows.length).toBe(2)
-  expect(rows[0].isInjected).toBe(false)
-  expect(rows[0].facts).toEqual([
+  expect(rows[0]!.isInjected).toBe(false)
+  expect(rows[0]!.facts).toEqual([
     '1 file: results.json',
     '2 cmd: python train.py, cat',
   ])
   // An injected turn still opens a row, and reads differently.
-  expect(rows[1].isInjected).toBe(true)
-  expect(rows[1].facts).toEqual([])
+  expect(rows[1]!.isInjected).toBe(true)
+  expect(rows[1]!.facts).toEqual([])
   // Every turn gets a row now, talk-only ones included: a trajectory with
   // holes in its numbering is not a trajectory.
   expect(rows.map(r => r.key)).toEqual(['t1', 't2'])
@@ -79,8 +79,8 @@ test('rowsOf anchors a row to its first tool call', () => {
     msg('user', 'just chatting'),
   ])
 
-  expect(rows[0].anchor).toBe('toolu_1')
-  expect(rows[1].anchor).toBe(undefined)
+  expect(rows[0]!.anchor).toBe('toolu_1')
+  expect(rows[1]!.anchor).toBe(undefined)
 })
 
 
@@ -97,7 +97,7 @@ test('parseFill keeps the numbered lines and drops everything else', () => {
   ].join('\n'))
 
   expect(Object.keys(parsed)).toEqual(['3', '7', '12'])
-  expect(parsed[7]).toEqual({ ask: 'Why is every command cd', did: 'Fixed verbOf: every tally had read cd×N' })
+  expect(parsed[7]!).toEqual({ ask: 'Why is every command cd', did: 'Fixed verbOf: every tally had read cd×N' })
 })
 
 // A terminal lays out in cells: a Chinese headline cut by character count came
@@ -113,6 +113,25 @@ test('cells counts CJK as two and ASCII as one', () => {
 test('parseAsks reads the two-field ask-only form', () => {
   const parsed = parseAsks(['Summary:', '4|改用 complete 只读单轮', '  9 | Ask why other sessions cannot see it'].join('\n'))
 
-  expect(parsed[4]).toBe('改用 complete 只读单轮')
-  expect(parsed[9]).toBe('Ask why other sessions cannot see it')
+  expect(parsed[4]!).toBe('改用 complete 只读单轮')
+  expect(parsed[9]!).toBe('Ask why other sessions cannot see it')
+})
+
+// A command you can only reach by spelling it exactly is one you keep looking up.
+test('resolveVerb takes an exact word, a prefix, or a near miss', () => {
+  expect(resolveVerb('fill')).toBe('fill')
+  expect(resolveVerb('fil')).toBe('fill')
+  expect(resolveVerb('rep')).toBe('replies')
+  expect(resolveVerb('lng')).toBe('lang')
+  expect(resolveVerb('langauge')).toBe('lang')
+  expect(resolveVerb('')).toBe(null)
+  expect(resolveVerb('xyzzy')).toBe(null)
+})
+
+test('resolveLanguage takes a name, a code, or a prefix', () => {
+  expect(resolveLanguage('zh')).toBe('中文')
+  expect(resolveLanguage('EN')).toBe('English')
+  expect(resolveLanguage('中文')).toBe('中文')
+  expect(resolveLanguage('esp')).toBe('Español')
+  expect(resolveLanguage('klingon')).toBe(null)
 })
