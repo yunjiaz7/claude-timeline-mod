@@ -23,9 +23,22 @@ let loaded = false
 // nobody is looking at. Turns arrive one per prompt, already spaced, so each is
 // filled as it lands — there is no burst to debounce.
 let filling = false
-/** Keys a fill tried and could not write. Without this a row the model keeps
-    declining to summarise is retried on every draw, forever, each one paid for. */
-const failed = new Set<string>()
+/**
+ * How many times a fill tried a row and wrote nothing. A row is given up on
+ * after GIVE_UP_AFTER, so a model that keeps declining one is not paid for on
+ * every draw — but a single failure no longer condemns it, since most are
+ * transient: a rate limit, an interrupted turn, a reply that parsed badly.
+ */
+const tries = new Map<string, number>()
+const GIVE_UP_AFTER = 3
+
+function isSpent(key: string): boolean {
+  return (tries.get(key) ?? 0) >= GIVE_UP_AFTER
+}
+
+function missed(key: string): void {
+  tries.set(key, (tries.get(key) ?? 0) + 1)
+}
 /**
  * The transcript size at the last attempt. A draw happens for many reasons and
  * most change nothing, so a fill that failed must not be retried until there is
@@ -403,16 +416,16 @@ async function runFill(
   isForced = false,
 ): Promise<string> {
   if (isForced) {
-    failed.clear()
+    tries.clear()
   } else if (size === triedAt) {
     return ''
   }
   // A prompt is there at once and a reply is not, so the ask is always written
   // first and the reply side upgrades it later. Waiting for the reply to write
   // either is what left a new row showing its raw prompt for a whole turn.
-  const asksOnly = rows.filter(r => !failed.has(r.key) && summaries[r.key] === undefined)
+  const asksOnly = rows.filter(r => !isSpent(r.key) && summaries[r.key] === undefined)
   const full = rows.filter(
-    r => !failed.has(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '',
+    r => !isSpent(r.key) && summaries[r.key]?.did === '' && r.body.trim() !== '',
   )
   if ((full.length === 0 && asksOnly.length === 0) || filling) {
     return ''
@@ -473,7 +486,7 @@ async function runFill(
         for (const row of full) {
           const got = parsed[row.n]
           if (got === undefined) {
-            failed.add(row.key)
+            missed(row.key)
           } else {
             summaries[row.key] = got
             written += 1
@@ -496,7 +509,7 @@ async function runFill(
           for (const row of full) {
             const got = parsed[row.n]
             if (got === undefined) {
-              failed.add(row.key)
+              missed(row.key)
             } else {
               summaries[row.key] = got
               written += 1
@@ -507,7 +520,7 @@ async function runFill(
         }
       } else {
         for (const row of full) {
-          failed.add(row.key)
+          missed(row.key)
         }
       }
     }

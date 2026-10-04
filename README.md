@@ -63,7 +63,7 @@ slower half:
 
 | | Row shows |
 |---|---|
-| No model call possible | your prompt, verbatim |
+| No summary written — a call failed, or none has run yet | your prompt, verbatim |
 | Ask summarised | what you wanted, and `→ summarising…` while a call runs, `→ waiting…` until one does |
 | Reply summarised | what you wanted, and what it did |
 
@@ -112,6 +112,10 @@ very differently:
   what a fork costs and it does not shrink with the work, so it is worth
   paying once across many turns and never once per turn. Measured over 35
   turns on a 414k-token session: 414.3k cached + 1.8k fresh in, 4.9k out.
+
+A row that a fill writes nothing for is tried three times across three turns
+before it is given up on, since most failures are transient — a rate limit, an
+interrupted turn, a reply that parsed badly. `/timeline fill` resets the count.
 
 A fill runs at most once per new turn: a draw happens for many reasons and
 most change nothing, so one that failed is not retried until the transcript
