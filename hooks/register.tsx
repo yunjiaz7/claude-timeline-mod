@@ -26,6 +26,13 @@ let filling = false
 /** Keys a fill tried and could not write. Without this a row the model keeps
     declining to summarise is retried on every draw, forever, each one paid for. */
 const failed = new Set<string>()
+/**
+ * The transcript size at the last attempt. A draw happens for many reasons and
+ * most change nothing, so a fill that failed must not be retried until there is
+ * something new to try it on — a resumed session has no forkable thread until
+ * its first turn ends, and without this it asks again on every redraw.
+ */
+let triedAt = -1
 type Spent = { calls: number; input: number; out: number; quota: number }
 
 /**
@@ -330,7 +337,20 @@ function asText(rows: Row[], store: Record<string, Summary>): string {
  * Summarise every turn that has none, in one fork, and store the result.
  * Resolves a line saying what it cost, or '' when there was nothing to do.
  */
-async function runFill($: EngineInterface, rows: Row[], storeKey: string, language: string): Promise<string> {
+async function runFill(
+  $: EngineInterface,
+  rows: Row[],
+  storeKey: string,
+  language: string,
+  size: number,
+  /** A fill you asked for retries whatever an automatic one gave up on. */
+  isForced = false,
+): Promise<string> {
+  if (isForced) {
+    failed.clear()
+  } else if (size === triedAt) {
+    return ''
+  }
   // A turn still in flight has no reply to summarise yet — its row exists the
   // moment the prompt lands, and summarising that is what produced a stream of
   // `0 of 1` fills over a 159-token prompt. It is picked up on the next draw.
@@ -341,6 +361,7 @@ async function runFill($: EngineInterface, rows: Row[], storeKey: string, langua
     return ''
   }
   filling = true
+  triedAt = size
   const startedAt = await $.clock.now()
   const before = quotaOf(await $.session.usage())
   try {
@@ -512,7 +533,7 @@ export const register: Register = (on, options) => {
     const storeKey = await loadStore($, language)
 
     if (arg === 'fill') {
-      const line = await runFill($, rows, storeKey, language)
+      const line = await runFill($, rows, storeKey, language, messages.length, true)
 
       return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}` }
     }
@@ -527,7 +548,7 @@ export const register: Register = (on, options) => {
       if (opened.isPlaced) {
         // Opening it is the signal that someone wants to read it: catch up on
         // whatever accumulated while it was closed, in one fork.
-        const line = await runFill($, rows, storeKey, language)
+        const line = await runFill($, rows, storeKey, language, messages.length)
 
         return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
       }
@@ -564,7 +585,7 @@ export const register: Register = (on, options) => {
     // summaries land on the redraw its own invalidate causes. `filling` and
     // the missing count bound it — once nothing is missing, no fork runs.
     if (unsummarised > 0 && !filling) {
-      void runFill($, rows, storeKey, language).then(line => {
+      void runFill($, rows, storeKey, language, messages.length).then(line => {
         if (line !== '') {
           $.ui.log(`timeline: ${line}`)
         }

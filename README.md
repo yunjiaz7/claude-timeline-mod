@@ -90,6 +90,12 @@ very differently:
   paying once across many turns and never once per turn. Measured over 35
   turns on a 414k-token session: 414.3k cached + 1.8k fresh in, 4.9k out.
 
+A fill runs at most once per new turn: a draw happens for many reasons and
+most change nothing, so one that failed is not retried until the transcript
+has grown. A resumed session has no forkable thread until its own first turn
+ends — without that gate it asks again on every redraw. `/timeline fill`
+ignores the gate and retries whatever an automatic fill gave up on.
+
 Both report what they took: elapsed time, tokens, and the share of the
 five-hour window the call moved, which is what a subscription actually
 spends. The pane header carries the running total, and `/timeline fill`
