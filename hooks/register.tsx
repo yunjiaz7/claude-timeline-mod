@@ -313,6 +313,31 @@ function asksPrompt(rows: Row[], language: string): string {
   ].join('\n')
 }
 
+/**
+ * Several turns with their replies, for `complete`, which sees only what it is
+ * given. Used where a fork cannot run; each body is trimmed hard so a whole
+ * backlog still fits one call.
+ */
+function batchPrompt(rows: Row[], language: string): string {
+  const each = Math.max(300, Math.floor(60000 / Math.max(1, rows.length)))
+
+  return [
+    'Below are turns of a coding session: what the user asked, then what the',
+    'assistant replied and which tools it ran.',
+    '',
+    'Output one line per turn, nothing else. No preamble, no markdown:',
+    '<number>|<the ask in up to 10 words>|<what the assistant did, up to 16 words, past tense>',
+    '',
+    'Name the concrete thing: the file, the fix, the finding, the number. If a',
+    'turn failed or was abandoned, say so plainly — never smooth a failure into',
+    'an accomplishment.',
+    '',
+    `Write both fields in ${language}, whatever language the turn is in.`,
+    '',
+    ...rows.map(r => `--- ${r.n}\nASKED: ${head(r.ask, 200)}\nDID: ${r.body.slice(0, each)}`),
+  ].join('\n')
+}
+
 export function parseAsks(text: string): Record<number, string> {
   const out: Record<number, string> = {}
   for (const line of text.split('\n')) {
@@ -429,9 +454,30 @@ async function runFill(
         }
       } else if (reply.reason === 'nothing-to-fork') {
         // A resumed session has no thread to fork until its own first turn
-        // ends. The asks are still there, so summarise those instead of
-        // leaving the whole timeline unwritten.
-        fellBack = full
+        // ends — but the replies are in the transcript either way, so ask the
+        // same question a way that needs no history rather than settle for
+        // less. Only a turn with nothing written yet falls back to ask-only.
+        const second = await $.model.complete({
+          model: 'haiku',
+          effort: 'low',
+          maxTokens: Math.min(8000, 100 + full.length * 45),
+          prompt: batchPrompt(full, language),
+        })
+        if (second.isAnswered) {
+          usages.push(second.usage)
+          const parsed = parseFill(second.text)
+          for (const row of full) {
+            const got = parsed[row.n]
+            if (got === undefined) {
+              failed.add(row.key)
+            } else {
+              summaries[row.key] = got
+              written += 1
+            }
+          }
+        } else {
+          fellBack = full
+        }
       } else {
         for (const row of full) {
           failed.add(row.key)

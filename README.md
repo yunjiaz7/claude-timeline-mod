@@ -86,10 +86,13 @@ very differently:
   the alternative on a long session.
 - **Several missing** — one `$.model.fork`, which re-reads the whole cached
   transcript once and writes every missing line from it.
-- **No reply to read** — a turn still running, or a resumed session with no
-  thread to fork yet: the ask is always there, so one `complete` over all of
-  them writes the ask side alone. Those rows stay open and a later fill
-  upgrades them once the reply exists. The prefix read is
+- **A fork that cannot run** — a resumed session has no thread to fork until
+  its own first turn ends. The replies are in the transcript either way, so
+  the same question goes to one `complete` with each turn's reply trimmed to
+  fit, rather than settling for less.
+- **No reply at all** — a turn still running: the ask is there and the reply
+  is not, so one `complete` over those asks writes the ask side alone. Such a
+  row stays open and a later fill upgrades it once the reply exists. The prefix read is
   what a fork costs and it does not shrink with the work, so it is worth
   paying once across many turns and never once per turn. Measured over 35
   turns on a 414k-token session: 414.3k cached + 1.8k fresh in, 4.9k out.
