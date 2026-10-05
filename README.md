@@ -175,7 +175,7 @@ it again and fills in what is missing.
 
 ```
 /timeline lang          # what it is now, and the choices
-/timeline lang 中文
+/timeline lang Chinese
 ```
 
 or the `Summary language` row in `/config`, which is the same setting — a

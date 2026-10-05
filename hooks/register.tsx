@@ -2,13 +2,15 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
-const LANGUAGES = ['English', '中文', '日本語', 'Español', 'Français', 'Deutsch'] as const
+const LANGUAGES = ['English', 'Chinese', 'Japanese', 'Spanish', 'French', 'German'] as const
+// Codes, and each language's own name — what the options were called before
+// they were English, so a setting saved then still resolves.
 const LANG_ALIAS: Record<string, string> = {
-  en: 'English', zh: '中文', cn: '中文', chinese: '中文',
-  ja: '日本語', jp: '日本語', japanese: '日本語',
-  es: 'Español', spanish: 'Español',
-  fr: 'Français', french: 'Français',
-  de: 'Deutsch', german: 'Deutsch',
+  en: 'English', zh: 'Chinese', cn: 'Chinese', '\u4e2d\u6587': 'Chinese',
+  ja: 'Japanese', jp: 'Japanese', '\u65e5\u672c\u8a9e': 'Japanese',
+  es: 'Spanish', 'espa\u00f1ol': 'Spanish',
+  fr: 'French', 'fran\u00e7ais': 'French',
+  de: 'German', deutsch: 'German',
 }
 
 /** A language name, its code, or the start of either. */
@@ -25,9 +27,13 @@ export function resolveLanguage(want: string): string | null {
   if (exact !== undefined) {
     return exact
   }
-  const byPrefix = LANGUAGES.filter(l => l.toLowerCase().startsWith(w))
+  // The start of a name, English or the language's own (`esp`, `deu`).
+  const byPrefix = new Set([
+    ...LANGUAGES.filter(l => l.toLowerCase().startsWith(w)),
+    ...Object.entries(LANG_ALIAS).filter(([k]) => k.length > 2 && k.startsWith(w)).map(([, v]) => v),
+  ])
 
-  return byPrefix.length === 1 ? byPrefix[0] ?? null : null
+  return byPrefix.size === 1 ? [...byPrefix][0] ?? null : null
 }
 
 // A message row's own render id, seen only while that row is drawn. Preferred
@@ -1437,7 +1443,10 @@ async function loadOnce($: EngineInterface, language: string): Promise<string> {
     // let a fill write both — a refill is one call, not one per turn.
     // Summaries are written in one language; changing it in /config reloads
     // the module, and the ones already stored no longer match, so they go.
-    const was = await $.store.get(`${storeKey}:language`)
+    const storedLanguage = await $.store.get(`${storeKey}:language`)
+    // Read through the aliases, so summaries written under an option's old
+    // name are kept rather than paid for again.
+    const was = typeof storedLanguage === 'string' ? resolveLanguage(storedLanguage) : storedLanguage
     summaries = was === language
       ? (Object.fromEntries(
           // `t12`: the keys of the position-keyed store, which cannot be
@@ -1528,7 +1537,7 @@ async function evictOldest($: EngineInterface): Promise<void> {
 }
 
 export const register: Register = (on, options) => {
-  const language = String(options.language ?? 'English')
+  const language = resolveLanguage(String(options.language ?? 'English')) ?? 'English'
   // Off: the reply pass is never built and never called. The ask pass still
   // runs, so a row still reads as a line rather than a raw prompt.
   const doReplies = options.replySummaries !== false

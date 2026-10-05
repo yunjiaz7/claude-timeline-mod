@@ -104,16 +104,16 @@ test('parseFill keeps the numbered lines and drops everything else', () => {
 // out about twice the pane width and wrapped under its own number.
 test('cells counts CJK as two and ASCII as one', () => {
   expect(cells('abc')).toBe(3)
-  expect(cells('中文')).toBe(4)
-  expect(cells('❯ 17 那我')).toBe(9)
+  expect(cells('\u4e2d\u6587')).toBe(4)
+  expect(cells('❯ 17 \u90a3\u6211')).toBe(9)
 })
 
 // The asks are always there, even when the reply is not — a turn still running,
 // or a resumed session with no thread to fork. An ask-only line beats no line.
 test('parseAsks reads the two-field ask-only form', () => {
-  const parsed = parseAsks(['Summary:', '4|改用 complete 只读单轮', '  9 | Ask why other sessions cannot see it'].join('\n'))
+  const parsed = parseAsks(['Summary:', '4|\u6539\u7528 complete \u53ea\u8bfb\u5355\u8f6e', '  9 | Ask why other sessions cannot see it'].join('\n'))
 
-  expect(parsed[4]!).toBe('改用 complete 只读单轮')
+  expect(parsed[4]!).toBe('\u6539\u7528 complete \u53ea\u8bfb\u5355\u8f6e')
   expect(parsed[9]!).toBe('Ask why other sessions cannot see it')
 })
 
@@ -129,10 +129,12 @@ test('resolveVerb takes an exact word, a prefix, or a near miss', () => {
 })
 
 test('resolveLanguage takes a name, a code, or a prefix', () => {
-  expect(resolveLanguage('zh')).toBe('中文')
+  expect(resolveLanguage('zh')).toBe('Chinese')
   expect(resolveLanguage('EN')).toBe('English')
-  expect(resolveLanguage('中文')).toBe('中文')
-  expect(resolveLanguage('esp')).toBe('Español')
+  expect(resolveLanguage('\u4e2d\u6587')).toBe('Chinese')
+  expect(resolveLanguage('esp')).toBe('Spanish')
+  expect(resolveLanguage('spa')).toBe('Spanish')
+  expect(resolveLanguage('\u65e5\u672c\u8a9e')).toBe('Japanese')
   expect(resolveLanguage('klingon')).toBe(null)
 })
 
@@ -164,9 +166,9 @@ test('costText splits prompts from replies and keeps what was spent before the s
 
 test('wrapCells breaks at a space when it can and mid-word when it cannot', () => {
   expect(wrapCells('one two three four', 9)).toEqual(['one two', 'three', 'four'])
-  expect(wrapCells('汉字汉字汉', 6)).toEqual(['汉字汉', '字汉'])
+  expect(wrapCells('\u6c49\u5b57\u6c49\u5b57\u6c49', 6)).toEqual(['\u6c49\u5b57\u6c49', '\u5b57\u6c49'])
   expect(wrapCells('short', 20)).toEqual(['short'])
-  for (const line of wrapCells('  → 生成了约120字的详细段落 with some English words mixed in', 16)) {
+  for (const line of wrapCells('  → \u751f\u6210\u4e86\u7ea6120\u5b57\u7684\u8be6\u7ec6\u6bb5\u843d with some English words mixed in', 16)) {
     expect(cells(line) <= 16).toBe(true)
   }
 })
@@ -237,7 +239,7 @@ test('keyOf matches the plain normalisation, also for a long paste', () => {
 
 test('clean drops colour codes and control characters and keeps the text', () => {
   expect(clean('\x1b[31mError:\x1b[0m bad\x07 path')).toBe('Error: bad path')
-  expect(clean('汉字 ok')).toBe('汉字 ok')
+  expect(clean('\u6c49\u5b57 ok')).toBe('\u6c49\u5b57 ok')
 })
 
 test('a key two turns share is not used to find either', () => {

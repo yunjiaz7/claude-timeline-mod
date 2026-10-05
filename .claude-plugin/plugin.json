@@ -9,11 +9,11 @@
       "description": "Language the summaries are written in",
       "options": [
         "English",
-        "中文",
-        "日本語",
-        "Español",
-        "Français",
-        "Deutsch"
+        "Chinese",
+        "Japanese",
+        "Spanish",
+        "French",
+        "German"
       ],
       "default": "English",
       "title": "Summary language"
