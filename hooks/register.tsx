@@ -422,7 +422,7 @@ const USD_OUT = 5
 /** The answer to `/timeline cost`: each side of the summaries, then how to stop the larger one. */
 export function costText(total: Spent, doReplies: boolean): string {
   if (total.calls === 0) {
-    return 'timeline cost: nothing spent in this session yet.'
+    return 'nothing spent on summaries in this session yet.'
   }
   const none: Side = { calls: 0, input: 0, out: 0 }
   const asks = total.asks ?? none
@@ -438,7 +438,7 @@ export function costText(total: Spent, doReplies: boolean): string {
     + ` · ≈ $${((side.input * USD_IN + side.out * USD_OUT) / 1e6).toFixed(3)}${note}`
 
   return [
-    'timeline cost — what the summaries in this session took (Haiku)',
+    'cost of the summaries in this session (Haiku)',
     '',
     line('prompts', asks, '   summarising what you asked'),
     line('replies', replies, '   summarising what Claude did'),
@@ -1784,7 +1784,7 @@ export const register: Register = (on, options) => {
     if (verb === 'help' || (word !== '' && verb === null)) {
       return {
         text: [
-          'timeline — what this session actually did, turn by turn.',
+          'what this session actually did, turn by turn.',
           '',
           '  /timeline                 open the pane, or close it if it is open',
           '  /timeline find [words]    search the turns by meaning; bare, hides or shows the search box',
@@ -1806,52 +1806,52 @@ export const register: Register = (on, options) => {
       const want = rest
       if (want === '') {
         return {
-          text: `timeline: summaries are in ${language}.`
+          text: `summaries are in ${language}.`
             + `\n  /timeline lang <${LANGUAGES.join(' | ')}>`,
         }
       }
       const picked = resolveLanguage(want)
       if (picked === null) {
-        return { text: `timeline: no such language. One of: ${LANGUAGES.join(', ')}` }
+        return { text: `no such language. One of: ${LANGUAGES.join(', ')}` }
       }
       if (picked === language) {
-        return { text: `timeline: already ${picked}.` }
+        return { text: `already ${picked}.` }
       }
       const done = await $.config.set({ key: 'timeline.language', value: picked })
       if ('deny' in done) {
-        return { text: `timeline: could not set it (${String(done.deny)})` }
+        return { text: `could not set it (${String(done.deny)})` }
       }
 
       // The change reloads the mod; the stored summaries no longer match the
       // language and are dropped on that load, so the next draw rewrites them.
-      return { text: `timeline: summaries will be written in ${picked} — open the pane to rewrite them.` }
+      return { text: `summaries will be written in ${picked} — open the pane to rewrite them.` }
     }
 
     if (verb === 'replies') {
       const want = rest.toLowerCase()
       if (want === '') {
         return {
-          text: `timeline: reply summaries are ${doReplies ? 'on' : 'off'}.`
+          text: `reply summaries are ${doReplies ? 'on' : 'off'}.`
             + '\n  /timeline replies <on | off>'
             + (doReplies ? '' : '\n  off: no call is made for the reply side at all.'),
         }
       }
       if (want !== 'on' && want !== 'off') {
-        return { text: 'timeline: say `on` or `off`.' }
+        return { text: 'say `on` or `off`.' }
       }
       const wantOn = want === 'on'
       if (wantOn === doReplies) {
-        return { text: `timeline: already ${want}.` }
+        return { text: `already ${want}.` }
       }
       const done = await $.config.set({ key: 'timeline.replySummaries', value: wantOn })
       if ('deny' in done) {
-        return { text: `timeline: could not set it (${String(done.deny)})` }
+        return { text: `could not set it (${String(done.deny)})` }
       }
 
       return {
         text: wantOn
-          ? 'timeline: reply summaries on — open the pane to fill them in.'
-          : 'timeline: replies off. Cards show only what you asked and nothing is spent on replies; what was written is kept for `replies on`.',
+          ? 'reply summaries on — open the pane to fill them in.'
+          : 'replies off. Cards show only what you asked and nothing is spent on replies; what was written is kept for `replies on`.',
       }
     }
 
@@ -1860,12 +1860,12 @@ export const register: Register = (on, options) => {
     if (verb === 'close' || (word === '' && (await $.ui.panes()).some(pane => pane.id === PANE))) {
       await $.ui.close({ id: PANE })
 
-      return { text: 'timeline: closed' }
+      return { text: 'closed' }
     }
 
     const messages = await $.session.messages()
     if ('deny' in messages) {
-      return { text: `timeline: cannot read this session (${messages.deny})` }
+      return { text: `cannot read this session (${messages.deny})` }
     }
     const rows = rowsCached(messages)
     const storeKey = await loadStore($, language)
@@ -1881,12 +1881,12 @@ export const register: Register = (on, options) => {
       if (rest === '' && isFinding) {
         closeFind($)
 
-        return { text: 'timeline: search box hidden — `/timeline find` brings it back' }
+        return { text: 'search box hidden — `/timeline find` brings it back' }
       }
       // `focus` hands the keyboard to the pane, where the field asks for it.
       const opened = await $.ui.open({ id: PANE, title: 'Timeline', focus: true })
       if (!opened.isPlaced) {
-        return { text: `timeline: this surface draws no pane (${opened.reason})` }
+        return { text: `this surface draws no pane (${opened.reason})` }
       }
       // The window goes to the head before the box takes over its scrolling.
       await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
@@ -1895,26 +1895,26 @@ export const register: Register = (on, options) => {
       if (rest !== '') {
         void runFind($, rows, rest)
 
-        return { text: `timeline: searching for "${rest}"` }
+        return { text: `searching for "${rest}"` }
       }
       redrawPane($)
 
-      return { text: 'timeline: search box shown — type in it and press Enter. `/timeline find` again hides it.' }
+      return { text: 'search box shown — type in it and press Enter. `/timeline find` again hides it.' }
     }
 
     if (verb === 'fill') {
       if (filling) {
-        return { text: 'timeline: a fill is already running.' }
+        return { text: 'a fill is already running.' }
       }
       const line = await runFill($, rows, storeKey, language, tailOf(messages), doReplies, true)
 
       const total = spent.calls > 0 ? ` Total so far: ${spentLine()}` : ''
 
-      return { text: `timeline: ${line === '' ? 'every turn already has a summary.' : line}${total}` }
+      return { text: `${line === '' ? 'every turn already has a summary.' : line}${total}` }
     }
 
     if (rows.length === 0) {
-      return { text: 'timeline: nothing recorded yet.' }
+      return { text: 'nothing recorded yet.' }
     }
 
     const opened = await $.ui.open({ id: PANE, title: 'Timeline' })
@@ -1923,14 +1923,14 @@ export const register: Register = (on, options) => {
       // whatever accumulated while it was closed.
       const line = await runFill($, rows, storeKey, language, tailOf(messages), doReplies)
 
-      return { text: line === '' ? 'timeline: pane opened' : `timeline: ${line}` }
+      return { text: line === '' ? 'pane opened' : `${line}` }
     }
     // No pane here: Remote Control and the VS Code extension attach no pane
     // surface (anthropics/claude-code#99217, #99045), and a narrow terminal
     // seats none. Say which, and print it rather than report a pane nobody
     // can see.
     return {
-      text: `timeline: this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries, doReplies)}`,
+      text: `this surface draws no pane (${opened.reason})\n\n${asText(rows, summaries, doReplies)}`,
     }
   })
 
