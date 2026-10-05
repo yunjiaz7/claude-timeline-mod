@@ -1366,8 +1366,13 @@ async function runFill(
     filling = false
     if (isRetried) {
       triedAt = ''
-      redrawPane($)
     }
+    // A fill starts only when the pane draws, and a draw that came while
+    // this one ran was skipped: a prompt sent meanwhile waited for whatever
+    // drew the pane next — with nothing else redrawing it, the end of its
+    // turn. The end of a fill is a draw of its own, so the next one starts
+    // at once; one with nothing left to write returns before calling out.
+    redrawPane($)
   }
 }
 
