@@ -11,9 +11,12 @@ instead of scrolling for minutes.
 
 ![Timeline demo: cards appear beside the transcript, each line is explained, a search jumps to a turn](docs/demo.gif)
 
-Full-resolution video:
+<details>
+<summary>▶ Full-resolution video (1 min)</summary>
 
 https://github.com/user-attachments/assets/6dc32523-1bf8-4dd6-8b6d-c505f1e4daf9
+
+</details>
 
 ## How to install
 
