@@ -19,13 +19,26 @@ https://github.com/user-attachments/assets/a2313dc7-06c0-4b59-8e63-0df1b1a0d42f
 
 Requires Claude Code v2.1.287 or later (the first version with mods).
 
+In Claude Code:
+
+```
+/plugin marketplace add yunjiaz7/claude-timeline-mod
+/plugin install timeline@claude-timeline-mod
+```
+
+The install screen shows the summary language and whether to summarise
+replies; choose **Install for you**, then **Save configuration** to keep the
+defaults. The mod is active at once: `/timeline` opens the pane, and the same
+command closes it. In a brand-new session, send a prompt first.
+
+Or from a terminal:
+
 ```bash
 claude plugin marketplace add yunjiaz7/claude-timeline-mod
 claude plugin install timeline@claude-timeline-mod
 ```
 
-If a session is already open, run `/reload-plugins` in it. Then `/timeline`
-opens the pane, and the same command closes it.
+Then start a session, or run `/reload-plugins` in one that is already open.
 
 ## What you get
 
@@ -128,6 +141,10 @@ the newest turn is on screen it skips those checks entirely.
   the transcript (`timeline: ui.render …`) says why. Please open an issue with it.
 - **A card keeps showing your raw prompt.** Its summary call failed or has not
   run yet. It is retried quietly; `/timeline fill` forces it.
+- **`Unknown command: /timeline`** right after installing from a terminal or
+  with `!claude plugin install`: run `/reload-plugins`, or start a new session.
+- **`/timeline` only says "nothing recorded yet".** The session has no prompts
+  yet; send one, then run `/timeline` again.
 - **Nothing happens on `/timeline`.** Check that `/plugin` lists `timeline` and
   that Claude Code is v2.1.287 or later.
 
