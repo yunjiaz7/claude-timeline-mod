@@ -13,7 +13,7 @@ instead of scrolling for minutes.
 
 Full-resolution video:
 
-https://github.com/user-attachments/assets/a2313dc7-06c0-4b59-8e63-0df1b1a0d42f
+https://github.com/user-attachments/assets/6dc32523-1bf8-4dd6-8b6d-c505f1e4daf9
 
 ## How to install
 
