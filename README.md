@@ -11,14 +11,9 @@ instead of scrolling for minutes.
 
 ![Timeline demo: cards appear beside the transcript, each line is explained, a search jumps to a turn](docs/demo.gif)
 
-```
-╭────────────────────────────────────────────────────────────────╮
-│ ❯ 42  Run the C2 ablation on a free GPU                        │
-│   → Queued three runs; best val acc 0.83 at lr 3e-4            │
-│   26 cmd: ssh×22, python3 train.py×3 · Monitor, CronCreate     │
-│   ⚠ Exit code 1  CUDA out of memory                            │
-╰────────────────────────────────────────────────────────────────╯
-```
+Full-resolution video:
+
+https://github.com/user-attachments/assets/a2313dc7-06c0-4b59-8e63-0df1b1a0d42f
 
 ## Install
 
