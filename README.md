@@ -92,18 +92,16 @@ anything else to happen.
 
 ## Usage line
 
-The top line of the pane shows how full the context window is and how much
-is left before auto-compaction runs, and how much of the five-hour and seven-day rate
-windows is used:
+The top line of the pane shows how much of the context window and of the
+five-hour and seven-day rate windows is used:
 
 ```
-Context 29% · 55% to compact                     5h 22%  7d 14%
+Context 51% used                          5h 6% used · 7d 16% used
 ```
 
-A figure turns to the theme's warning colour with ten points or less left
-before compaction or past 80% of a rate window, and to the error colour at
-three points left or past 95%. The figures
-come from the session's own status-line data and cost nothing to read.
+A figure turns to the theme's warning colour past 80% and to the error colour
+past 95%. The figures come from the session's own status-line data and cost
+nothing to read.
 
 ## Search
 

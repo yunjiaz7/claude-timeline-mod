@@ -210,16 +210,14 @@ test('cardOf reads the card off any of its lines and nothing off the search box'
   expect(cardOf(undefined)).toBe(null)
 })
 
-test('meterParts shows the figures and warns as each nears its edge', () => {
+test('meterParts marks each figure as used and warns as it nears the edge', () => {
   const text = (parts: { text: string }[]) => parts.map(p => p.text).join('')
-  const calm = meterParts({ context: 42, compactAt: 92, fiveHour: 23, sevenDay: 38 })
-  expect(text(calm.left)).toBe('Context 42% · 50% to compact')
-  expect(text(calm.right)).toBe('5h 23%  7d 38%')
-  expect(calm.left[3]!.color).toBe('text')
-  expect(meterParts({ context: 85, compactAt: 92 }).left[3]!.color).toBe('warning')
-  expect(meterParts({ context: 91, compactAt: 92 }).left[3]!.color).toBe('error')
-  expect(text(meterParts({ context: 10, compactAt: null }).left)).toBe('Context 10% · auto-compact off')
-  expect(meterParts({ fiveHour: 97 }).right[1]!.color).toBe('error')
+  const calm = meterParts({ context: 51, fiveHour: 6, sevenDay: 16 })
+  expect(text(calm.left)).toBe('Context 51% used')
+  expect(text(calm.right)).toBe('5h 6% used · 7d 16% used')
+  expect(calm.left[1]!.color).toBe('text')
+  expect(meterParts({ context: 85 }).left[1]!.color).toBe('warning')
+  expect(meterParts({ sevenDay: 97 }).right[1]!.color).toBe('error')
   expect(meterParts({}).left).toEqual([])
 })
 

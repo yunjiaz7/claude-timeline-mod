@@ -1318,69 +1318,42 @@ async function runFill(
 let sessionKey: string | null = null
 
 /**
- * The figures the usage line shows, as whole percentages. `compactAt` is where
- * auto-compaction runs, as a share of the same window: null when it is off,
- * undefined until read. Read at most every two seconds — the plain usage call
- * is free, and the threshold comes once per turn from a local estimate.
+ * The figures the usage line shows, as percentages used. Read at most every
+ * two seconds; the usage call is free.
  */
-type Meter = { context?: number; compactAt?: number | null; fiveHour?: number; sevenDay?: number }
+type Meter = { context?: number; fiveHour?: number; sevenDay?: number }
 let meter: Meter = {}
 let meterAt = 0
-let isCompactRead = false
 
 async function readMeter($: EngineInterface): Promise<void> {
   if (Date.now() - meterAt < 2000) {
     return
   }
   meterAt = Date.now()
-  const wantCompact = !isCompactRead
-  const usage = await $.session.usage(wantCompact ? { breakdown: 'summary' } : undefined)
+  const usage = await $.session.usage()
   const rate = (kind: string) => usage.rateLimits.find(r => r.kind === kind)?.percentUsed
-  let compactAt = meter.compactAt
-  if (wantCompact) {
-    isCompactRead = true
-    const breakdown = usage.context.breakdown
-    if (breakdown !== undefined) {
-      compactAt = breakdown.isAutoCompactEnabled && breakdown.autoCompactThreshold !== undefined && usage.context.window > 0
-        ? Math.round((100 * breakdown.autoCompactThreshold) / usage.context.window)
-        : null
-    }
-  }
-  meter = { context: usage.context.percent, compactAt, fiveHour: rate('five_hour'), sevenDay: rate('seven_day') }
+
+  meter = { context: usage.context.percent, fiveHour: rate('five_hour'), sevenDay: rate('seven_day') }
 }
 
 /** A run of the usage line: its text and the theme colour it is drawn in. */
 type Part = { text: string; color: string; bold?: boolean }
 
 /**
- * The usage line, left side and right side. A figure turns to the theme's
- * warning colour when it is close to the point where something happens to it:
- * ten points or less left before compaction, or past 80% of a rate window,
- * and to the error colour at three points left or past 95%.
+ * The usage line, left side and right side, each figure marked as used. One
+ * turns to the theme's warning colour past 80% and to the error colour past 95%.
  */
 export function meterParts(m: Meter): { left: Part[]; right: Part[] } {
   const label = (text: string): Part => ({ text, color: 'inactive' })
-  const figure = (n: number, isNear: boolean, isOver = false): Part => ({
-    text: `${Math.round(n)}%`,
-    color: isOver ? 'error' : isNear ? 'warning' : 'text',
-    bold: true,
-  })
-  const left: Part[] = []
-  if (m.context !== undefined) {
-    left.push(label('Context '), figure(m.context, false))
-    if (typeof m.compactAt === 'number') {
-      // What is left before auto-compaction runs, in the same unit as the
-      // figure beside it: "60% · 37% to compact", not the threshold itself.
-      const rest = Math.max(0, m.compactAt - m.context)
-      left.push(label(' · '), figure(rest, rest <= 10, rest <= 3), label(' to compact'))
-    } else if (m.compactAt === null) {
-      left.push(label(' · auto-compact off'))
-    }
-  }
+  const used = (n: number): Part[] => [
+    { text: `${Math.round(n)}%`, color: n >= 95 ? 'error' : n >= 80 ? 'warning' : 'text', bold: true },
+    label(' used'),
+  ]
+  const left: Part[] = m.context === undefined ? [] : [label('Context '), ...used(m.context)]
   const right: Part[] = []
   for (const [name, n] of [['5h', m.fiveHour], ['7d', m.sevenDay]] as const) {
     if (n !== undefined) {
-      right.push(label(`${right.length > 0 ? '  ' : ''}${name} `), figure(n, n >= 80, n >= 95))
+      right.push(label(`${right.length > 0 ? ' · ' : ''}${name} `), ...used(n))
     }
   }
 
@@ -1520,7 +1493,6 @@ export const register: Register = (on, options) => {
     cache = null
     isRunning = true
     callFailures = 0
-    isCompactRead = false
     saveIds($)
     $.ui.invalidate('ui.render')
 
@@ -1964,8 +1936,8 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" paddingRight={1}>
-        {/* What is left before the session compacts and before the rate
-            windows run out: figures only, coloured as they near the edge. */}
+        {/* How much of the context window and of the rate windows is used:
+            figures only, coloured as they near the edge. */}
         {(left.length > 0 || right.length > 0) && (
           <Box flexDirection="row" justifyContent="space-between" paddingX={2}>
             <Box flexDirection="row">{run(left, 'ml')}</Box>
