@@ -136,26 +136,11 @@ Summaries are written by Haiku on your own Claude account.
 
 ## Performance
 
-Measured on an Apple M4 with Claude Code 2.1.289: CPU used by the Claude Code
-process, as a percent of one core, averaged over three rounds that alternate
-between the setups below.
-
-| | Without the mod | Installed, pane closed | Pane open |
-|---|---|---|---|
-| Idle, 30 s | 1.5% | 1.6% | 2.1% |
-| Scrolling the transcript, 20 s | 4.7% | 6.7% | 10.0% |
-| Sending a short prompt, 12 s | 6.2% | not measured | 8.5% |
-
-- **Idle** costs next to nothing.
-- **Sending a prompt** costs about 2% more: the new card, its one-line
-  summary, and the pane redrawing.
-- **Scrolling** costs the most. Claude Code has no event for "the transcript
-  scrolled", so to keep the marked card in step the mod reads the position each
-  message reports as it is drawn, and checks once more shortly after a scroll
-  stops. While the newest prompt is on screen it skips those checks.
-- **With the pane closed** nothing is summarised and no model is called, but
-  the hooks that read message positions still run on every redraw, which is the
-  extra 2% while scrolling.
+Scrolling the transcript is where the pane costs the most. Claude Code has no
+event for "the transcript scrolled", so to keep the marked card in step the mod
+reads the position each message reports as it is drawn, and checks once more
+shortly after a scroll stops. While the newest prompt is on screen it skips
+those checks.
 
 ### How it got lighter
 
@@ -173,8 +158,8 @@ finer tools, and splitting the job between them is what made the difference:
 It also skips checking while the newest prompt is on screen, since its card
 is then the marked one.
 
-Extra CPU cost of using the mod (percent of one core, on top of what Claude
-Code uses without it):
+Extra CPU cost of using the mod with the pane open, on an Apple M4 with Claude
+Code 2.1.289 (percent of one core, on top of what Claude Code uses without it):
 
 | | First version | Now |
 |---|---|---|
