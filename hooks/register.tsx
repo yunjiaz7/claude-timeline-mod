@@ -55,12 +55,22 @@ type Seen = { tool?: string; text?: string; isAsk?: boolean; at: number }
 const visible = new Map<string, Seen>()
 let markedN: number | null = null
 /**
- * The marked turn, published for the pane. Writing it redraws the pane and
- * nothing else; invalidating `ui.render` redraws every transcript row as well,
- * which is the cost to avoid while the transcript scrolls.
+ * A counter the pane reads, so that bumping it redraws the pane and nothing
+ * else. Invalidating `ui.render` redraws every transcript row as well — and
+ * empties the engine's cache of them — so it is kept for the one thing that
+ * needs it: making the rows report where they are.
  */
-const markAtom = atom({ plugin: 'timeline', key: 'mark' } as const, null as number | null)
-let published: number | null = null
+const drawAtom = atom({ plugin: 'timeline', key: 'draw' } as const, 0)
+/** The mark as the pane last drew it. */
+let drawnMark: number | null = null
+/** Whether the pane is open: set by its own draw, cleared by `ui.close`. */
+let isOpen = false
+
+function redrawPane($: EngineInterface): void {
+  // A write the engine refuses (one made while a drawing is running) falls
+  // back to the broad redraw, so the pane is never left stale.
+  void update($, drawAtom, n => n + 1).catch(() => $.ui.invalidate('ui.render'))
+}
 /**
  * Each row's last `onScreen`, as text. A redraw the loop asked for reports
  * the same value again; a different one means the transcript moved.
@@ -68,6 +78,12 @@ let published: number | null = null
 const lastSeen = new Map<string, string>()
 /** Whether a row reported a move since the loop's last tick. */
 let hasMoved = false
+/**
+ * Whether a message row reported text the rows do not hold: the transcript
+ * grew since they were read. At `turn.start` the new prompt may not be stored
+ * yet, so a pane drawn then lacks it; the loop rereads on its next tick.
+ */
+let isStale = false
 let turnOfTool = new Map<string, number>()
 let turnOfText = new Map<string, number>()
 /** Texts more than one turn carries, with the turns that carry each. */
@@ -227,8 +243,8 @@ let waiting: { cancel: () => void } | null = null
 let scrolledTo: number | null = null
 
 function step($: EngineInterface): void {
-  void $.ui.panes().then(panes => {
-    if (!panes.some(pane => pane.id === PANE)) {
+  {
+    if (!isOpen) {
       looping = false
       return
     }
@@ -244,12 +260,14 @@ function step($: EngineInterface): void {
       if (markedN !== before) {
         ticksLeft = FAST_TICKS
       }
-      if (markedN !== published) {
-        published = markedN
-        void update($, markAtom, () => markedN).catch(() => undefined)
+      if (isStale) {
+        isStale = false
+        cache = null
+        redrawPane($)
       }
       // Out here, not in the draw: keep the marked card inside the pane's own
-      // window as well.
+      // window as well. Moving the window redraws the pane by itself, so the
+      // pane is asked for a redraw only if that did not already show the mark.
       if (markedN !== null && markedN !== scrolledTo && !isFinding) {
         scrolledTo = markedN
         void $.ui.scroll({ to: { key: `t${markedN}` }, in: PANE, block: 'nearest' }).catch(() => undefined)
@@ -259,10 +277,15 @@ function step($: EngineInterface): void {
         const to = fitTop(heights, findTop, markedN - 1, paneRows - HEAD_ROWS)
         if (to !== findTop) {
           findTop = to
-          $.ui.invalidate('ui.render')
+          redrawPane($)
           keepRing($)
         }
       }
+      $.clock.after(60, () => {
+        if (drawnMark !== markedN) {
+          redrawPane($)
+        }
+      })
       if (ticksLeft > 0) {
         ticksLeft -= 1
         step($)
@@ -273,7 +296,7 @@ function step($: EngineInterface): void {
         })
       }
     })
-  })
+  }
 }
 
 function loop($: EngineInterface): void {
@@ -511,7 +534,7 @@ function keepRing($: EngineInterface): void {
     return
   }
   const at = shownOrder.indexOf(selected)
-  const isDrawn = at >= findTop && at < findTop + 40
+  const isDrawn = at >= findTop && at < findTop + drawnCount
   const key = isDrawn ? `j${selected}` : 'find'
   if (!isDrawn) {
     selected = null
@@ -531,6 +554,24 @@ export function cardOf(key: string | null | undefined): number | null {
 /** Rows each drawn card takes, and the rows the pane shows: what following needs. */
 let heights: number[] = []
 let paneRows = 40
+/**
+ * How many cards are drawn under the box: the ones that fit, and one more so
+ * the last row of the window is never empty. The window does not move while
+ * the box is up, so a card past these could not be seen.
+ */
+let drawnCount = 40
+
+export function fitCount(rowsOf: readonly number[], top: number, room: number): number {
+  let used = 0
+  let n = 0
+  for (let i = top; i < rowsOf.length && used <= room; i += 1) {
+    used += rowsOf[i] ?? 0
+    n += 1
+  }
+
+  return n + 1
+}
+
 /** The usage line, the box, its status, its hint and the gap above the first card. */
 const HEAD_ROWS = 7
 
@@ -605,7 +646,7 @@ function closeFind($: EngineInterface): void {
   query = ''
   matches = null
   findTop = 0
-  $.ui.invalidate('ui.render')
+  redrawPane($)
 }
 
 let findAbort: AbortController | null = null
@@ -615,7 +656,7 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
   findTop = 0
   if (query === '') {
     matches = null
-    $.ui.invalidate('ui.render')
+    redrawPane($)
 
     return
   }
@@ -625,7 +666,7 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
   const abort = new AbortController()
   findAbort = abort
   isSearching = true
-  $.ui.invalidate('ui.render')
+  redrawPane($)
   try {
     const reply = await $.model.complete({
       model: 'haiku',
@@ -657,7 +698,7 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
     if (findAbort === abort) {
       findAbort = null
       isSearching = false
-      $.ui.invalidate('ui.render')
+      redrawPane($)
     }
   }
 }
@@ -1203,7 +1244,7 @@ async function runFill(
     // the transcript.
     const land = async () => {
       await saveSummaries($, storeKey)
-      $.ui.invalidate('ui.render')
+      redrawPane($)
     }
 
     // The asks go first: they are short, they need no reply, and they are
@@ -1297,7 +1338,7 @@ async function runFill(
     const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
     spent.quota += quota
     await put($, `${storeKey}:spent`, spent)
-    $.ui.invalidate('ui.render')
+    redrawPane($)
 
     const seconds = ((await $.clock.now()) - startedAt) / 1000
     const asked = full.length + asksOnly.length
@@ -1310,7 +1351,7 @@ async function runFill(
     filling = false
     if (isRetried) {
       triedAt = ''
-      $.ui.invalidate('ui.render')
+      redrawPane($)
     }
   }
 }
@@ -1489,12 +1530,18 @@ export const register: Register = (on, options) => {
   // Without this the pane sits on whatever the last draw found.
   // A prompt lands at turn.start, and the pane was only redrawn at
   // turn.complete — so a new row sat showing its raw text for the whole turn.
+  on('ui.close', { id: PANE }, ($, e, next) => {
+    isOpen = false
+
+    return next(e)
+  })
+
   on('turn.start', ($, e, next) => {
     cache = null
     isRunning = true
     callFailures = 0
     saveIds($)
-    $.ui.invalidate('ui.render')
+    redrawPane($)
 
     return next(e)
   })
@@ -1503,7 +1550,7 @@ export const register: Register = (on, options) => {
     cache = null
     isRunning = false
     saveIds($)
-    $.ui.invalidate('ui.render')
+    redrawPane($)
 
     return next(e)
   })
@@ -1535,8 +1582,8 @@ export const register: Register = (on, options) => {
         const to = at < was ? at : fitTop(heights, was, at, paneRows - HEAD_ROWS)
         if (to !== was) {
           findTop = to
-          $.ui.invalidate('ui.render')
-          if (at < was || at >= was + 40) {
+          redrawPane($)
+          if (at < was || at >= was + drawnCount) {
             // Not in the tree yet: `$.ui.focus` waits for the drawing that brings it.
             void $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
 
@@ -1604,7 +1651,7 @@ export const register: Register = (on, options) => {
         }
         if (top !== findTop) {
           findTop = top
-          $.ui.invalidate('ui.render')
+          redrawPane($)
           // After the redraw: given the ring where it sits now, below the
           // window, the engine would move the window to show it and take the
           // search box off the top.
@@ -1619,7 +1666,7 @@ export const register: Register = (on, options) => {
     const to = Math.min(Math.max(0, findCount - 1), Math.max(0, findTop + cards))
     if (to !== findTop) {
       findTop = to
-      $.ui.invalidate('ui.render')
+      redrawPane($)
       keepRing($)
     }
 
@@ -1630,6 +1677,9 @@ export const register: Register = (on, options) => {
     const key = keyOf(e.props.text)
     if (key === '') {
       return next(e)
+    }
+    if (cache !== null && !turnOfText.has(key) && !sharedKeys.has(key)) {
+      isStale = true
     }
     askIds.set(key, e.requestId)
 
@@ -1789,7 +1839,7 @@ export const register: Register = (on, options) => {
 
         return { text: `timeline: searching for "${rest}"` }
       }
-      $.ui.invalidate('ui.render')
+      redrawPane($)
 
       return { text: 'timeline: search box shown — type in it and press Enter. `/timeline find` again hides it.' }
     }
@@ -1849,13 +1899,14 @@ export const register: Register = (on, options) => {
       rows = cache.rows
       size = cache.tail
     }
-    // Read so that publishing a new mark redraws this pane; the module's own
-    // value is the one used, being never older.
-    await read($, markAtom)
+    // Read so that bumping it redraws this pane alone.
+    await read($, drawAtom)
+    isOpen = true
     // The maps may just have caught up with rows that reported before them.
     recompute()
     loop($)
     const nowAt = markedN
+    drawnMark = nowAt
     // The pane's own body, not `e.viewport`: that is the conversation's width,
     // and sizing by it cut every line for a column twice as wide as the pane.
     // Less the pane's right pad, the card's border and its padding.
@@ -1921,6 +1972,9 @@ export const register: Register = (on, options) => {
         + (doReplies && row.facts.length > 0 ? wrapCells(`  ${row.facts.join(' · ')}`, width).length : 0)
         + errors
     })
+    if (isFinding) {
+      drawnCount = fitCount(heights, findTop, paneRows - HEAD_ROWS)
+    }
     const status = isSearching
       ? 'searching…'
       : matches === null
@@ -1985,7 +2039,7 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
         )}
-        {(isFinding ? shown.slice(findTop, findTop + 40) : shown).map(row => {
+        {(isFinding ? shown.slice(findTop, findTop + drawnCount) : shown).map(row => {
           // Its own prompt, else its first tool call, else the last tool call
           // before it — the nearest row above that the transcript can find.
           // A duplicate ask's own row once the reports have placed it, else its

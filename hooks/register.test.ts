@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cardOf, cells, chunksOf, clean, costText, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cardOf, cells, chunksOf, clean, costText, fitCount, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -256,4 +256,10 @@ test('nearest picks the duplicate whose turn sits among the rows reported with i
   expect(nearest([3, 31], [29, 30, 31, 32])).toBe(31)
   expect(nearest([3, 31], [2, 4])).toBe(3)
   expect(nearest([3, 31], [])).toBe(undefined)
+})
+
+test('fitCount draws the cards that fit the window and one more', () => {
+  expect(fitCount([4, 4, 4, 4, 4, 4], 0, 10)).toBe(4)
+  expect(fitCount([4, 4, 4, 4, 4, 4], 4, 10)).toBe(3)
+  expect(fitCount([30], 0, 10)).toBe(2)
 })
