@@ -9,6 +9,8 @@ Built for long sessions: an overnight auto-research loop, a conversation of
 hundreds of turns, several sessions in several terminals. Read one screen
 instead of scrolling for minutes.
 
+![Timeline demo: cards appear beside the transcript, each line is explained, a search jumps to a turn](docs/demo.gif)
+
 ```
 ╭────────────────────────────────────────────────────────────────╮
 │ ❯ 42  Run the C2 ablation on a free GPU                        │
