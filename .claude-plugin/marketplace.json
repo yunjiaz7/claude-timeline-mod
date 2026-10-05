@@ -1,14 +1,18 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claude-timeline-mod",
-  "description": "What a Claude Code session actually did, turn by turn, in a pane beside the transcript.",
-  "owner": { "name": "yunjia zheng", "url": "https://github.com/yunjiaz7" },
+  "description": "Timeline for Claude Code: one card per turn of a session, beside the transcript.",
+  "owner": {
+    "name": "Yunjia Zheng",
+    "url": "https://github.com/yunjiaz7"
+  },
   "plugins": [
     {
       "name": "timeline",
-      "description": "One row per turn: what you asked, what it did, what it touched. Press a row to jump the transcript there.",
+      "description": "A pane with one card per turn of the session: what you asked, what Claude did, what it touched. Click a card to jump to that turn.",
       "source": "./",
-      "category": "productivity"
+      "category": "productivity",
+      "version": "0.2.0"
     }
   ]
 }

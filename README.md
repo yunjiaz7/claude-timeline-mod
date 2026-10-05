@@ -1,249 +1,166 @@
-# timeline
+# Timeline for Claude Code
+
+A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that
+turns a long session into a navigable timeline: a pane beside the transcript
+with one card per turn — what you asked, what Claude did, which files and
+commands it touched, and any errors. Click a card to jump to that turn.
+
+Built for long sessions: an overnight auto-research loop, a conversation of
+hundreds of turns, several sessions in several terminals. Read one screen
+instead of scrolling for minutes.
 
 ```
+╭────────────────────────────────────────────────────────────────╮
+│ ❯ 42  Run the C2 ablation on a free GPU                        │
+│   → Queued three runs; best val acc 0.83 at lr 3e-4            │
+│   26 cmd: ssh×22, python3 train.py×3 · Monitor, CronCreate     │
+│   ⚠ Exit code 1  CUDA out of memory                            │
+╰────────────────────────────────────────────────────────────────╯
+```
+
+## Install
+
+Requires Claude Code v2.1.287 or later (the first version with mods).
+
+```bash
 claude plugin marketplace add yunjiaz7/claude-timeline-mod
 claude plugin install timeline@claude-timeline-mod
 ```
 
-Or point `CLAUDE_CODE_PLUGIN_DIRS` at a folder holding a clone, which is what
-to do while editing it.
-
-
-A Claude Code mod that reads a session as **what actually happened** — for each
-turn, the files touched, the commands run, the errors hit.
-
-Not a table of contents (who said what). A work log (what changed). Built for
-unattended long runs: let an auto-research loop go overnight, read one screen in
-the morning.
-
-## Use
+If a session is already open, run `/reload-plugins` in it. Then:
 
 ```
-/timeline help    # every command, and what the settings are now
-/timeline         # open the pane (docks right of the transcript)
-/timeline find    # hide or show the search box at the top of the pane
-/timeline fill    # summarise the turns that have none yet
-/timeline close
+/timeline
 ```
 
-```
-❯ 42  Run the C2 ablation on a free GPU
-      → Queued three runs at lr 1e-4/3e-4/1e-3; best val acc 0.83 at 3e-4
-      26 cmd: ssh×22, python3 train.py×3 · Monitor, CronCreate
-      ⚠ Exit code 1  CUDA out of memory
-```
+## What you get
 
-Every turn gets a row, talk-only ones included — a trajectory with holes in
-its numbering is not a trajectory. The headline is the ask as the model read
-it (the point of the turn, not its wording); click anywhere on the card to go
-read what you actually wrote.
+- **One card per turn**, numbered in order, talk-only turns included.
+  - The title is your ask, summarised in one line as soon as you send it.
+  - `→` is what Claude did, written when the turn ends.
+  - The grey line counts what the transcript recorded: files written, commands
+    run, other tools. No model is involved in it.
+  - `⚠` lines are errors exactly as the tool reported them, never summarised.
+- **Click anywhere on a card** to scroll the transcript to that turn.
+- **The card for the turn on screen is marked** and follows as you scroll the
+  transcript; a new prompt moves the mark to its card.
+- **Search by meaning** in the box at the top: describe the turn you remember,
+  in any words or language, and press Enter. Results are shown best first;
+  `[ back to timeline ]` returns to every card.
+- **Keyboard**: with the pane focused (click it), ↑ ↓ move between cards and
+  Enter jumps.
+- **Usage line** at the top: how much of the context window and of the 5-hour
+  and 7-day rate windows is used. A figure turns to the warning colour past
+  80% and to the error colour past 95%.
+- **Every colour comes from your Claude Code theme**, so the pane reads the same
+  in light and dark themes and in any terminal.
 
-`❯` is a turn you typed, `⏱` one injected — a background task reporting, a
-scheduled trigger, a slash command. The whole card is the control: click any
-line of it and the transcript scrolls to that turn. Only a Button takes a
-press and its hit area is its label, so each line is a Button padded to the
-card's width. Their text rests in the theme's `inactive` grey and comes up to
-the theme's text colour under the pointer — every colour in the pane is a
-theme key, so it reads the same whatever the terminal's own colours are. It aims at the message itself where that
-row has been drawn, and otherwise at the turn's first tool row, whose
-requestId is its tool_use_id — read straight from the transcript, so turns
-from before the mod was installed jump too.
+## Commands
 
-## Surfaces
-
-`$.ui.open` reports whether the pane was actually placed, so `/timeline` draws
-a pane where one can be drawn and prints the same rows inline where one cannot
-— naming the reason rather than claiming a pane nobody can see. There is no
-separate print command: the only case that needed one is the case that answers
-itself.
-
-| Surface | Pane |
+| Command | What it does |
 |---|---|
-| Terminal (>=110 cols) | yes |
-| Desktop app hosting its own session | yes |
-| Desktop / iOS **viewing a session over Remote Control** | no — [#99217](https://github.com/anthropics/claude-code/issues/99217) |
-| VS Code extension | no — [#99045](https://github.com/anthropics/claude-code/issues/99045) |
-| Mobile | no (reports `isFullscreen: false`) |
+| `/timeline` | Open the pane |
+| `/timeline close` | Close it |
+| `/timeline find` | Hide or show the search box (shown by default) |
+| `/timeline find <words>` | Search right away |
+| `/timeline fill` | Summarise every turn that has no summary yet, now |
+| `/timeline cost` | What the summaries in this session have cost |
+| `/timeline lang [name]` | Show or set the summary language |
+| `/timeline replies on\|off` | Write the "what Claude did" line, or summarise only your asks |
+| `/timeline help` | All commands and the current settings |
 
-The engine is surface-agnostic: its `ui_render` accepts `desktop`, `mobile` and
-`vscode`, and `$.ui.resolve(e)` hands each surface its own element table. The
-gap is on the client side — a Remote Control viewer and the VS Code webview
-never attach as a render surface, so nothing a mod draws is requested from
-them. Both are open bugs; nothing a mod can do reaches those views today
-except its text.
+A near miss is accepted: `/timeline fil`, `/timeline lng`.
 
-## What a row shows, and when
+Settings are also in `/config`: **Summary language** (English, Chinese,
+Japanese, Spanish, French, German) and **Summarise replies**.
 
-A prompt lands instantly and a reply does not, so a row never waits on the
-slower half:
+## Where it draws
 
-| | Row shows |
+| Where you run Claude Code | Pane |
 |---|---|
-| No summary written — a call failed, or none has run yet | your prompt, verbatim |
-| Ask summarised | what you wanted, and `→ summarising…` while a call runs, `→ waiting…` until one does |
-| Reply summarised | what you wanted, and what it did |
+| A terminal, including an editor's integrated terminal | yes |
+| The Code tab of the Claude Desktop app | yes |
+| The VS Code extension's chat panel, `claude -p`, a session viewed over Remote Control | no: `/timeline` prints the timeline as text instead |
 
-Each step carries more than the last and none of them blocks. The ask is
-always written first, in its own short call, and the pane is redrawn the
-moment it lands — a row never sits showing its raw prompt while the turn it
-opened is still running. The reply pass follows in the same run, over the rows
-the ask pass just created, so a row reaches its full form without waiting for
-anything else to happen.
+## Cost
 
-## Usage line
+Summaries are written by Haiku on your own Claude account.
 
-The top line of the pane shows how much of the context window and of the
-five-hour and seven-day rate windows is used:
+- **Nothing is spent while the pane is closed.** A session can run all night
+  and cost nothing until you open the pane, which then catches up in one pass.
+- Each summary is written once and stored; it is never recomputed.
+- Asks are cheap: in one measured session, 118 asks took 3.8k input and 1.9k
+  output tokens, 0.0% of the 5-hour window. Reply summaries read more (an
+  excerpt of each reply) and cost more.
+- `/timeline cost` shows the split between asks, replies and searches, in
+  tokens, an estimate at Haiku's list price, and the share of the 5-hour window.
+- `/timeline replies off` stops all spending on reply summaries.
+- A search is one call, and only when you run one.
 
-```
-Context 51% used                          5h 6% used · 7d 16% used
-```
+## Data and privacy
 
-A figure turns to the theme's warning colour past 80% and to the error colour
-past 95%. The engine pushes the figures after each turn and whenever a rate window
-moves a point, so nothing polls for them.
+- **What is sent, and where.** Only to Anthropic's API through your own Claude
+  Code session (`$.model.complete`), and only while the pane is open or when
+  you run `/timeline fill` or a search:
+  - for an ask: the start and end of your prompt, at most 560 characters;
+  - for a reply: at most 6,000 characters per turn, made of up to 1,500
+    characters of each reply message plus the first line (up to 120
+    characters) of each tool call's command or file path;
+  - for a search: each card's summary and a short excerpt of its prompt, plus
+    your query.
+- **Nothing else leaves the process.** The mod uses no network, file-system,
+  process or environment access of its own; `claude plugin validate` lists
+  every capability it calls.
+- **What is stored, and where.** In Claude Code's plugin store on your machine
+  (`~/.claude/plugins/store/timeline_*.json`), per session: the summaries, the
+  token counts, the summary language, and jump targets. The first 60
+  characters of each prompt are used as the lookup key, so they are stored in
+  plain text. The store holds 4 MiB in all; when it is full, the least recently
+  used sessions are removed. Delete the file to clear everything.
+- **Summaries are a model's reading.** Text in the conversation can influence
+  what a summary says. The file and command counts and the error lines come
+  straight from the transcript and are not affected.
 
-## Search
+## Performance
 
-The pane opens with a bordered search box at its top. `/timeline find` puts
-it away for the session, and the same again brings it back. Type what you remember of a turn, in any
-words or language, and press Enter: one Haiku call reads every turn's
-summary and prompt and returns the ones that match by meaning, best first.
-The pane then shows only those cards — click one to jump to it. `[ back to timeline ]`
-under the box leaves the results and shows every card again.
-With the pane holding the keyboard (click it, or the focus chord), ↑ and ↓
-move a highlight from card to card and Enter jumps to the one it is on; ↑
-from the first card goes to the search box. The wheel scrolls the cards and
-leaves the highlight on its card.
+With the pane closed the mod does no work. With it open, following the
+transcript costs a little CPU while you scroll, because Claude Code has no
+event for "the transcript scrolled": the mod reads the positions transcript rows
+report as they are drawn, and checks again shortly after a scroll stops. While
+the newest turn is on screen it skips those checks entirely.
 
-While the box is open the pane's window does not move: the cards under the
-box are scrolled by the mod, a card per tick, so the box stays where it is
-without being redrawn.
-`/timeline find <words>` opens the box and searches in one step. A search
-costs one small call and nothing is spent until you run one.
+## Troubleshooting
 
-## Summaries
-
-Each turn gets both halves — what you asked and what it did. Results are
-stored per session and never recomputed.
-
-It fills itself from the draw: drawing the pane is the signal that someone is
-reading it, and the only one that holds across a reload, a reopen and a new
-turn alike. The tree goes back immediately with the asks as written and the
-summaries land on the redraw the fill triggers, so nothing waits on a model.
-With the pane closed nothing is drawn and nothing is spent — a session can run all night unattended
-and cost nothing until you open the pane in the morning, which then summarises
-the whole night in one pass.
-
-Every call is `$.model.complete` on Haiku, which carries no history and reads
-only what it is handed — the ask alone for a row with no summary yet, the turn
-with its reply for one being upgraded — and takes an explicit output cap.
-
-Batches are chunked so a reply always fits that cap. A fork was used for them
-once and is not any more: it takes no cap, so one answering 61 rows ran past
-the default, lost every line after it, counted those rows as failures and
-re-read the whole cached prefix to fail again — 33 calls and two million
-tokens for a timeline that stayed unwritten. It is also what the measured cost
-argued against: 3.8k tokens for 118 asks, against 414k for one fork.
-
-The pane shows no cost. `/timeline cost` does: calls and tokens for the
-prompt summaries and for the reply summaries apart, the share of the
-five-hour window they moved in all — which is what a subscription actually
-spends — and how to turn the reply side off. `/timeline fill` forces a fill
-by hand.
-
-What the model writes sits beside what the transcript recorded, never instead
-of it: the command tally stays, and an error is printed as the tool reported
-it. A summary of a failure reads "addressed the issue" far too easily.
-
-## Turning the reply side off
-
-```
-/timeline replies off
-/timeline replies on
-/timeline replies          # what it is now
-```
-
-or the `Summarise replies` row in `/config`. With it off a card shows only
-what you asked: the reply line, the tally of files and commands and the errors
-are all hidden, and nothing is called for the reply side — the list of rows to
-upgrade is built empty, so the loop that would call the model has nothing to
-iterate. What was already written stays stored, and turning it back on shows
-it again and fills in what is missing.
-
-## Language
-
-```
-/timeline lang          # what it is now, and the choices
-/timeline lang Chinese
-```
-
-or the `Summary language` row in `/config`, which is the same setting — a
-mod's options belong in the one menu that lists every mod's, and a mod with
-its own command should answer for its own setting too. Both write the row.
-They are written in that language whatever language the turn itself is in, so
-a session that mixes two reads as one.
-
-Changing it reloads the mod, and the stored summaries no longer match, so they
-are dropped and the next fill rewrites them — one call, not one per turn.
-
-## Following the transcript
-
-The turn the transcript is showing is marked, and the pane scrolls to keep that
-card in view. Every kind of row reports `onScreen` — the ask, each block of the
-reply, each tool call — so each is mapped to its turn, and the earliest turn in
-the latest burst of reports is the one marked. When the newest turn is on
-screen it is marked instead: you are at the live end, and a new prompt should
-take the marker with it.
-
-Reports alone are not enough. The engine answers a row's draw from memory when
-its props are ones it has seen, so a row returning to where it was — the bottom
-of the transcript, after a scroll up and a quick one down — calls no hook and
-reports nothing; and a fast scroll unmounts rows without reporting them off.
-So while the pane is open a timer invalidates the draw, which makes every
-mounted row report afresh: every 200ms for a couple of seconds after the
-transcript last moved, then once every three seconds as a net for a move that
-raised no report at all. Closed, nothing runs.
-
-The marked turn is plain module state. A render hook may not write `$.state` —
-the engine denies it, drawing is pure — so the pane reads the module's value
-and that same invalidation redraws it. A redraw reuses the rows it already has
-rather than fetching the transcript again.
-
-## Rows are derived
-
-Rows come from walking the whole transcript, so the walk is cached and redone
-only when the transcript grows. Nothing is accumulated as you work.
-
-A reload empties the module's own variables — the store survives it, the
-in-memory copy does not — so every path that reads summaries loads them first,
-drawing included. A path that trusts another to have loaded them shows an
-empty timeline after the next reload, with the data still on disk.
-
-## Past sessions
-
-For a session that is no longer open:
-
-```bash
-python3 scripts/timeline_past.py ~/.claude/projects/<project>/<session>.jsonl \
-  --since=2026-09-05 --min-tools=4
-```
+- **The pane is blank.** Claude Code refused the tree the mod drew; a dim line in
+  the transcript (`timeline: ui.render …`) says why. Please open an issue with it.
+- **A card keeps showing your raw prompt.** Its summary call failed or has not
+  run yet. It is retried quietly; `/timeline fill` forces it.
+- **Nothing happens on `/timeline`.** Check that `/plugin` lists `timeline` and
+  that Claude Code is v2.1.287 or later.
 
 ## Develop
 
 ```bash
-claude plugin validate .
-claude plugin test .
+git clone https://github.com/yunjiaz7/claude-timeline-mod
+claude --plugin-dir ./claude-timeline-mod
 ```
 
-With hot reloading on, an edit lands on the next turn.
+`--plugin-dir` loads the clone for one session and reloads it when you save.
+To load it in every session, add the clone's parent folder to
+`CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`.
 
-A tree that does not validate is refused at render time, not by `validate`, and
-the pane goes blank. The engine says why on a dim transcript line
-(`timeline: ui.render hook skipped: …`) — read that before guessing.
+Once the mod has loaded, Claude Code writes the API types for your build to
+`.claude-plugin/types/` (not committed), which `tsconfig.json` uses:
 
-## Status
+```bash
+npx -p typescript tsc -p . --noEmit   # types
+claude plugin validate .              # manifest, hooks and capabilities
+claude plugin test .                  # unit tests
+```
 
-v0. Deliberately absent: model-written titles per segment, a live pane,
-cross-session rollup, writing to disk. Each waits until using it proves the
-shape is right.
+All the mod's code is in `hooks/register.tsx`; `types/index.d.ts` declares its
+plugin state.
+
+## License
+
+[MIT](LICENSE)

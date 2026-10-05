@@ -1,7 +1,21 @@
 {
   "name": "timeline",
-  "version": "0.1.0",
-  "description": "Claude Code mod: what actually happened this session, turn by turn",
+  "version": "0.2.0",
+  "description": "A pane with one card per turn of the session: what you asked, what Claude did, what it touched. Click a card to jump to that turn.",
+  "author": {
+    "name": "Yunjia Zheng",
+    "url": "https://github.com/yunjiaz7"
+  },
+  "homepage": "https://github.com/yunjiaz7/claude-timeline-mod",
+  "repository": "https://github.com/yunjiaz7/claude-timeline-mod",
+  "license": "MIT",
+  "keywords": [
+    "timeline",
+    "navigation",
+    "summary",
+    "pane",
+    "mod"
+  ],
   "types": "./types/index.d.ts",
   "userConfig": {
     "language": {
