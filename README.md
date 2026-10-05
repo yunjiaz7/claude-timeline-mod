@@ -100,8 +100,8 @@ Context 51% used                          5h 6% used · 7d 16% used
 ```
 
 A figure turns to the theme's warning colour past 80% and to the error colour
-past 95%. The figures come from the session's own status-line data and cost
-nothing to read.
+past 95%. The engine pushes the figures after each turn and whenever a rate window
+moves a point, so nothing polls for them.
 
 ## Search
 

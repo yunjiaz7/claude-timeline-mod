@@ -1359,22 +1359,29 @@ async function runFill(
 let sessionKey: string | null = null
 
 /**
- * The figures the usage line shows, as percentages used. Read at most every
- * two seconds; the usage call is free.
+ * The figures the usage line shows, as percentages used. The engine pushes
+ * them on `session.measure` (after each turn, and when a rate window moves a
+ * point), so they are not asked for; only a pane drawn before the first push
+ * since this module loaded reads them once.
  */
 type Meter = { context?: number; fiveHour?: number; sevenDay?: number }
 let meter: Meter = {}
-let meterAt = 0
+let hasMeter = false
 
-async function readMeter($: EngineInterface): Promise<void> {
-  if (Date.now() - meterAt < 2000) {
-    return
-  }
-  meterAt = Date.now()
-  const usage = await $.session.usage()
+type Usage = { context: { percent?: number }; rateLimits: readonly { kind: string; percentUsed: number }[] }
+
+export function meterOf(usage: Usage): Meter {
   const rate = (kind: string) => usage.rateLimits.find(r => r.kind === kind)?.percentUsed
 
-  meter = { context: usage.context.percent, fiveHour: rate('five_hour'), sevenDay: rate('seven_day') }
+  return { context: usage.context.percent, fiveHour: rate('five_hour'), sevenDay: rate('seven_day') }
+}
+
+async function readMeter($: EngineInterface): Promise<void> {
+  if (hasMeter) {
+    return
+  }
+  hasMeter = true
+  meter = meterOf(await $.session.usage())
 }
 
 /** A run of the usage line: its text and the theme colour it is drawn in. */
@@ -1530,6 +1537,16 @@ export const register: Register = (on, options) => {
   // Without this the pane sits on whatever the last draw found.
   // A prompt lands at turn.start, and the pane was only redrawn at
   // turn.complete — so a new row sat showing its raw text for the whole turn.
+  on('session.measure', ($, e, next) => {
+    meter = meterOf(e)
+    hasMeter = true
+    if (isOpen) {
+      redrawPane($)
+    }
+
+    return next(e)
+  })
+
   on('ui.close', { id: PANE }, ($, e, next) => {
     isOpen = false
 
