@@ -27,11 +27,8 @@ claude plugin marketplace add yunjiaz7/claude-timeline-mod
 claude plugin install timeline@claude-timeline-mod
 ```
 
-If a session is already open, run `/reload-plugins` in it. Then:
-
-```
-/timeline
-```
+If a session is already open, run `/reload-plugins` in it. Then `/timeline`
+opens the pane, and the same command closes it.
 
 ## What you get
 
@@ -59,8 +56,7 @@ If a session is already open, run `/reload-plugins` in it. Then:
 
 | Command | What it does |
 |---|---|
-| `/timeline` | Open the pane |
-| `/timeline close` | Close it |
+| `/timeline` | Open the pane, or close it if it is open |
 | `/timeline find` | Hide or show the search box (shown by default) |
 | `/timeline find <words>` | Search right away |
 | `/timeline fill` | Summarise every turn that has no summary yet, now |

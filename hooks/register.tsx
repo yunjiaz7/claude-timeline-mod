@@ -1769,7 +1769,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'timeline',
-      description: 'What this session did — `find`, `fill`, `cost`, `lang`, `replies on|off`, `close`',
+      description: 'Open or close the timeline pane — also `find`, `fill`, `cost`, `lang`, `replies on|off`',
     })
 
     return next(e)
@@ -1786,13 +1786,12 @@ export const register: Register = (on, options) => {
         text: [
           'timeline — what this session actually did, turn by turn.',
           '',
-          '  /timeline                 open the pane (or print it where none can be drawn)',
+          '  /timeline                 open the pane, or close it if it is open',
           '  /timeline find [words]    search the turns by meaning; bare, hides or shows the search box',
           '  /timeline fill            summarise everything missing now',
           '  /timeline cost            what the summaries took: prompts, replies, share of the 5h window',
           '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
           '  /timeline replies on|off  write the reply side, or only the ask',
-          '  /timeline close',
           '',
           `  now: ${language} · replies ${doReplies ? 'on' : 'off'}`,
           '  a near miss is accepted: /timeline fil, /timeline lng, /timeline rep',
@@ -1856,7 +1855,9 @@ export const register: Register = (on, options) => {
       }
     }
 
-    if (verb === 'close') {
+    // Bare, the command is a switch, as Claude Code's own panes are. `close`
+    // is kept for anyone who learned it.
+    if (verb === 'close' || (word === '' && (await $.ui.panes()).some(pane => pane.id === PANE))) {
       await $.ui.close({ id: PANE })
 
       return { text: 'timeline: closed' }
