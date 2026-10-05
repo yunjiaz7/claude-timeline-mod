@@ -525,7 +525,6 @@ let isSearching = false
 // ones above `findTop`. A box that chased the window's offset was drawn one
 // frame late on every tick and flickered.
 let findTop = 0
-let findCount = 0
 // The keyboard's ring. Every line of a card is a Button, so the ring would
 // stop on each line; it is steered to stop once per card, on the title.
 let focusedKey: string | null = null
@@ -575,6 +574,24 @@ let paneRows = 40
  * the box is up, so a card past these could not be seen.
  */
 let drawnCount = 40
+
+/**
+ * The furthest the first drawn card may go: the one from which the cards to
+ * the end just fill the window, so the last card stays at the bottom as it
+ * does when the pane scrolls by itself, instead of rising to the top over
+ * empty space.
+ */
+export function lastTop(rowsOf: readonly number[], room: number): number {
+  let used = 0
+  for (let i = rowsOf.length - 1; i >= 0; i -= 1) {
+    used += rowsOf[i] ?? 0
+    if (used > room) {
+      return Math.min(rowsOf.length - 1, i + 1)
+    }
+  }
+
+  return 0
+}
 
 export function fitCount(rowsOf: readonly number[], top: number, room: number): number {
   let used = 0
@@ -1703,7 +1720,7 @@ export const register: Register = (on, options) => {
 
       return {}
     }
-    const to = Math.min(Math.max(0, findCount - 1), Math.max(0, findTop + cards))
+    const to = Math.min(lastTop(heights, paneRows - HEAD_ROWS), Math.max(0, findTop + cards))
     if (to !== findTop) {
       findTop = to
       redrawPane($)
@@ -1984,7 +2001,6 @@ export const register: Register = (on, options) => {
     const shown = isFinding && matches !== null
       ? matches.map(n => rows[n - 1]).filter((r): r is Row => r !== undefined)
       : rows
-    findCount = shown.length
     shownOrder = shown.map(r => r.n)
     isPaneFocused = e.props.isFocused === true
     // The window is meant to stay at the head while the box is up. If the
@@ -2013,6 +2029,9 @@ export const register: Register = (on, options) => {
         + errors
     })
     if (isFinding) {
+      // A window that grew, or cards that got shorter, can leave the first
+      // card past where the last one would sit at the bottom.
+      findTop = Math.min(findTop, lastTop(heights, paneRows - HEAD_ROWS))
       drawnCount = fitCount(heights, findTop, paneRows - HEAD_ROWS)
     }
     const status = isSearching

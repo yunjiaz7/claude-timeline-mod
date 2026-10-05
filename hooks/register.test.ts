@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cardOf, cells, chunksOf, clean, costText, fitCount, meterOf, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cardOf, cells, chunksOf, clean, costText, fitCount, lastTop, meterOf, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -270,4 +270,11 @@ test('meterOf reads the figures the usage line shows from a measurement', () => 
   expect(meterOf({ context: { percent: 51 }, rateLimits: [{ kind: 'five_hour', percentUsed: 6 }, { kind: 'seven_day', percentUsed: 16 }] }))
     .toEqual({ context: 51, fiveHour: 6, sevenDay: 16 })
   expect(meterOf({ context: {}, rateLimits: [] })).toEqual({ context: undefined, fiveHour: undefined, sevenDay: undefined })
+})
+
+test('lastTop keeps the last card at the bottom of the window', () => {
+  expect(lastTop([4, 4, 4, 4, 4, 4], 10)).toBe(4)
+  expect(lastTop([4, 4, 4, 4, 4, 4], 100)).toBe(0)
+  expect(lastTop([4, 30], 10)).toBe(1)
+  expect(lastTop([], 10)).toBe(0)
 })
