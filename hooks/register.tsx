@@ -90,6 +90,13 @@ let hasMoved = false
  * yet, so a pane drawn then lacks it; the loop rereads on its next tick.
  */
 let isStale = false
+/**
+ * Whether the newest turn was among the rows last reported. Then the mark is
+ * the newest card whatever else is on screen, so a sweep could not change it:
+ * the loop skips them, which is most of the time — sitting at the bottom, and
+ * while a reply streams in. A scroll away reports by itself and clears this.
+ */
+let isAtEnd = false
 let turnOfTool = new Map<string, number>()
 let turnOfText = new Map<string, number>()
 /** Texts more than one turn carries, with the turns that carry each. */
@@ -189,7 +196,8 @@ function recompute(): void {
   // With the newest turn on screen you are following the live end, and that is
   // the turn to mark — not the tail of the one before it, which is all that
   // "earliest in the viewport" finds the moment a new prompt lands.
-  if (atEnd && latestN > 0) {
+  isAtEnd = atEnd && latestN > 0
+  if (isAtEnd) {
     top = latestN
   }
   if (top === undefined || top === markedN) {
@@ -257,8 +265,9 @@ function step($: EngineInterface): void {
     const before = markedN
     // While the transcript moves the rows report on their own, so the loop
     // only asks for a full redraw when none did: after a move stops, and as
-    // the slow net for a move that raised no report at all.
-    if (!hasMoved) {
+    // the slow net for a move that raised no report at all — and never while
+    // the newest turn is on screen, where the mark cannot be anything else.
+    if (!hasMoved && !isAtEnd) {
       $.ui.invalidate('ui.render')
     }
     hasMoved = false
