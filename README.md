@@ -15,30 +15,34 @@ Full-resolution video:
 
 https://github.com/user-attachments/assets/a2313dc7-06c0-4b59-8e63-0df1b1a0d42f
 
-## Install
+## How to install
 
-Requires Claude Code v2.1.287 or later (the first version with mods).
-
-In Claude Code:
+Inside Claude Code (v2.1.287 or later, the first version with mods):
 
 ```
 /plugin marketplace add yunjiaz7/claude-timeline-mod
 /plugin install timeline@claude-timeline-mod
 ```
 
-The install screen shows the summary language and whether to summarise
-replies; choose **Install for you**, then **Save configuration** to keep the
-defaults. The mod is active at once: `/timeline` opens the pane, and the same
-command closes it. In a brand-new session, send a prompt first.
+Choose **Install for you**, then **Save configuration** to keep the default
+settings. The mod is active at once: type `/timeline` to open the pane, and
+again to close it. In a brand-new session, send a prompt first.
 
-Or from a terminal:
+The pane sits beside the transcript with Claude Code's fullscreen renderer
+(`/tui fullscreen`). Without it, the pane opens below the transcript and shows
+only the first few cards.
 
-```bash
-claude plugin marketplace add yunjiaz7/claude-timeline-mod
-claude plugin install timeline@claude-timeline-mod
-```
+### Other ways to install
 
-Then start a session, or run `/reload-plugins` in one that is already open.
+- **From a terminal:**
+
+  ```bash
+  claude plugin marketplace add yunjiaz7/claude-timeline-mod
+  claude plugin install timeline@claude-timeline-mod
+  ```
+
+  Then start a session, or run `/reload-plugins` in one that is already open.
+- **From a clone, to work on it:** see [Develop](#develop).
 
 ## What you get
 
@@ -129,11 +133,61 @@ Summaries are written by Haiku on your own Claude account.
 
 ## Performance
 
-With the pane closed the mod does no work. With it open, following the
-transcript costs a little CPU while you scroll, because Claude Code has no
-event for "the transcript scrolled": the mod reads the positions transcript rows
-report as they are drawn, and checks again shortly after a scroll stops. While
-the newest turn is on screen it skips those checks entirely.
+Measured on an Apple M4 with Claude Code 2.1.289: CPU used by the Claude Code
+process, as a percent of one core, averaged over three rounds that alternate
+between the setups below.
+
+| | Without the mod | Installed, pane closed | Pane open |
+|---|---|---|---|
+| Idle, 30 s | 1.5% | 1.6% | 2.1% |
+| Scrolling the transcript, 20 s | 4.7% | 6.7% | 10.0% |
+| Sending a short prompt, 12 s | 6.2% | not measured | 8.5% |
+
+- **Idle** costs next to nothing.
+- **Sending a prompt** costs about 2% more: the new card, its one-line
+  summary, and the pane redrawing.
+- **Scrolling** costs the most. Claude Code has no event for "the transcript
+  scrolled", so to keep the marked card in step the mod reads the position each
+  message reports as it is drawn, and checks once more shortly after a scroll
+  stops. While the newest prompt is on screen it skips those checks.
+- **With the pane closed** nothing is summarised and no model is called, but
+  the hooks that read message positions still run on every redraw, which is the
+  extra 2% while scrolling.
+
+### How it got lighter
+
+In the first version, knowing which message you are reading and showing it
+on its card were one blunt action: redraw every message on screen, five times
+a second, so that each one would report where it was. The mods API offers two
+finer tools, and splitting the job between them is what made the difference:
+
+- **Knowing where you are.** Claude Code redraws messages as you scroll anyway,
+  and each one reports its position when it is drawn. The mod listens instead
+  of asking.
+- **Showing it.** The marked card lives in the mod's state, and a change to
+  that state redraws only the pane that reads it, never the transcript.
+
+It also skips checking while the newest prompt is on screen, since its card
+is then the marked one.
+
+Extra CPU cost of using the mod (percent of one core, on top of what Claude
+Code uses without it):
+
+| | First version | Now |
+|---|---|---|
+| Scrolling the transcript | 11% | 5.3% |
+| Sending a short prompt | 4.4% | 2.3% |
+
+About half, in both cases. The first version was measured in an earlier
+session, so compare these extra costs rather than raw totals.
+
+### How it was measured
+
+A scripted terminal (200×50) drives the same session with and without the
+mod, alternating between them: 30 s untouched, 20 s of mouse-wheel scrolling
+at five ticks a second, and one short prompt. CPU time is read from `ps`
+before and after each step. Identical runs differ by up to about 1–2%, so
+smaller differences are noise.
 
 ## Troubleshooting
 
