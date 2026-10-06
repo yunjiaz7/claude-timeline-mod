@@ -45,7 +45,7 @@ The full reference. For a quick start, see the [README](../README.md).
 | `/timeline find` | Show or hide the search box at the top of the pane. |
 | `/timeline lang <language>` | Write summaries in another language, e.g. `/timeline lang Chinese`. Without a language, shows the current one. |
 | `/timeline replies off` | Stop writing the "what Claude did" line, to save tokens. `/timeline replies on` brings it back. |
-| `/timeline cost` | Show how many tokens the summaries have used, and how much of your 5-hour limit. |
+| `/timeline cost` | Show how many tokens the summaries have used, with an estimate in dollars. |
 | `/timeline fill` | Write any missing summaries now, instead of waiting for the pane to catch up. |
 | `/timeline help` | List every command and your current settings. |
 
@@ -70,10 +70,13 @@ Summaries are written by Haiku on your own Claude account.
   and cost nothing until you open the pane, which then catches up in one pass.
 - Each summary is written once and stored; it is never recomputed.
 - Asks are cheap: in one measured session, 118 asks took 3.8k input and 1.9k
-  output tokens, 0.0% of the 5-hour window. Reply summaries read more (an
+  output tokens, too few to move the 5-hour usage meter. Reply summaries read
+  more (an
   excerpt of each reply) and cost more.
 - `/timeline cost` shows the split between asks, replies and searches, in
-  tokens, an estimate at Haiku's list price, and the share of the 5-hour window.
+  tokens, with an estimate at Haiku's API list price. It shows no share of the
+  5-hour limit: Claude Code's usage meter moves in whole percents, too coarse
+  to measure summaries by.
 - `/timeline replies off` stops all spending on reply summaries.
 - A search is one call, and only when you run one.
 

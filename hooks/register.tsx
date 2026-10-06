@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionMessage } from 'claude-code'
+import type { EngineInterface, ModelUsage, Register, SessionMessage } from 'claude-code'
 
 const PANE = 'timeline'
 const LANGUAGES = ['English', 'Chinese', 'Japanese', 'Spanish', 'French', 'German'] as const
@@ -396,28 +396,63 @@ function missed(key: string): void {
  * something new to try it on, rather than on every redraw.
  */
 let triedAt = ''
-type Side = { calls: number; input: number; out: number }
+// `input` counts every input token; `cached` and `written` are the parts read
+// from and written to the prompt cache, priced apart. Totals stored before the
+// split lack them, so those are priced as uncached.
+type Side = { calls: number; input: number; out: number; cached?: number; written?: number }
 // `asks` and `replies` came later than the totals: a session summarised before
 // them has totals larger than the two sides, and the rest is shown as earlier.
-type Spent = Side & { quota: number; asks?: Side; replies?: Side; finds?: Side }
+type Spent = Side & { asks?: Side; replies?: Side; finds?: Side }
+
+/** One call's usage as a Side. */
+function sideOf(u: ModelUsage): Side {
+  return {
+    calls: 1,
+    input: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
+    out: u.output_tokens,
+    cached: u.cache_read_input_tokens,
+    written: u.cache_creation_input_tokens,
+  }
+}
+
+function addSide(to: Side, by: Side): Side {
+  return {
+    calls: to.calls + by.calls,
+    input: to.input + by.input,
+    out: to.out + by.out,
+    cached: (to.cached ?? 0) + (by.cached ?? 0),
+    written: (to.written ?? 0) + (by.written ?? 0),
+  }
+}
 
 /**
  * What this session's fills have cost. Kept in the store, not just in memory:
  * a reload empties the module and a running total that resets on every reload
  * is not a running total.
  */
-let spent: Spent = { calls: 0, input: 0, out: 0, quota: 0 }
+let spent: Spent = { calls: 0, input: 0, out: 0 }
 
 function spentLine(): string {
   return spent.calls === 0
     ? ''
-    : `${spent.quota.toFixed(1)}% of 5h · ${k(spent.input)} in / ${k(spent.out)} out · ${spent.calls} call${spent.calls > 1 ? 's' : ''}`
+    : `${k(spent.input)} in / ${k(spent.out)} out · ${spent.calls} call${spent.calls > 1 ? 's' : ''}`
 }
 
-// Haiku's API list price per million tokens. A subscription pays in quota, not
-// dollars, so this is only a scale for comparing the two sides.
+// Haiku's API list price per million tokens: input, output, cache reads and
+// cache writes. A subscription is not billed in dollars, so this is an
+// estimate, a scale for comparing the sides.
 const USD_IN = 1
 const USD_OUT = 5
+const USD_CACHED = 0.1
+const USD_WRITTEN = 1.25
+
+export function usdOf(side: Side): number {
+  const cached = side.cached ?? 0
+  const written = side.written ?? 0
+  const plain = Math.max(0, side.input - cached - written)
+
+  return (plain * USD_IN + cached * USD_CACHED + written * USD_WRITTEN + side.out * USD_OUT) / 1e6
+}
 
 /** The answer to `/timeline cost`: each side of the summaries, then how to stop the larger one. */
 export function costText(total: Spent, doReplies: boolean): string {
@@ -432,10 +467,12 @@ export function costText(total: Spent, doReplies: boolean): string {
     calls: total.calls - asks.calls - replies.calls - finds.calls,
     input: total.input - asks.input - replies.input - finds.input,
     out: total.out - asks.out - replies.out - finds.out,
+    cached: Math.max(0, (total.cached ?? 0) - (asks.cached ?? 0) - (replies.cached ?? 0) - (finds.cached ?? 0)),
+    written: Math.max(0, (total.written ?? 0) - (asks.written ?? 0) - (replies.written ?? 0) - (finds.written ?? 0)),
   }
   const line = (name: string, side: Side, note = '') =>
     `  ${name.padEnd(9)}${String(side.calls).padStart(4)} call${side.calls === 1 ? ' ' : 's'} · ${k(side.input)} in / ${k(side.out)} out`
-    + ` · ≈ $${((side.input * USD_IN + side.out * USD_OUT) / 1e6).toFixed(3)}${note}`
+    + ` · ≈ $${usdOf(side).toFixed(3)}${note}`
 
   return [
     'cost of the summaries in this session (Haiku)',
@@ -445,8 +482,9 @@ export function costText(total: Spent, doReplies: boolean): string {
     ...(finds.calls > 0 ? [line('searches', finds, '   /timeline find')] : []),
     ...(earlier.calls > 0 ? [line('earlier', earlier, '   before the two were counted apart')] : []),
     '',
-    `  ${total.quota.toFixed(1)}% of the 5h window in all. Dollars are Haiku's API list price, for scale:`,
-    '  a subscription pays in that window, not in dollars.',
+    '  Dollars are an estimate at Haiku\'s API list price, for scale: a subscription is',
+    '  not billed in dollars. No share of the 5-hour limit is shown: Claude Code\'s',
+    '  usage meter moves in whole percents, too coarse to measure summaries by.',
     '',
     doReplies
       ? '  Replies cost more because they read Claude\'s output. `/timeline replies off`\n  stops them — nothing is spent reading output, and prompts are still summarised.'
@@ -711,18 +749,11 @@ async function runFind($: EngineInterface, rows: Row[], wanted: string): Promise
     }
     matches = reply.isAnswered ? parseFind(reply.text, rows.length) : []
     if (reply.isAnswered && reply.usage !== undefined && sessionKey !== null) {
-      const by: Side = {
-        calls: 1,
-        input: reply.usage.cache_read_input_tokens + reply.usage.input_tokens,
-        out: reply.usage.output_tokens,
-      }
-      const was = spent.finds ?? { calls: 0, input: 0, out: 0 }
+      const by = sideOf(reply.usage)
       spent = {
         ...spent,
-        calls: spent.calls + 1,
-        input: spent.input + by.input,
-        out: spent.out + by.out,
-        finds: { calls: was.calls + 1, input: was.input + by.input, out: was.out + by.out },
+        ...addSide(spent, by),
+        finds: addSide(spent.finds ?? { calls: 0, input: 0, out: 0 }, by),
       }
       await put($, `${sessionKey}:spent`, spent)
     }
@@ -1139,10 +1170,6 @@ export function parseFill(text: string): Record<number, { ask: string; did: stri
   return out
 }
 
-function quotaOf(usage: { rateLimits: readonly { kind: string; percentUsed: number }[] }): number {
-  return usage.rateLimits.find(r => r.kind === 'five_hour')?.percentUsed ?? 0
-}
-
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
 /**
@@ -1245,10 +1272,9 @@ async function runFill(
   triedAt = size
   let isRetried = false
   const startedAt = await $.clock.now()
-  const before = quotaOf(await $.session.usage())
   try {
     let written = 0
-    type Usage = { input_tokens: number; output_tokens: number; cache_read_input_tokens: number } | undefined
+    type Usage = ModelUsage | undefined
     const askUsages: Usage[] = []
     const replyUsages: Usage[] = []
 
@@ -1348,27 +1374,19 @@ async function runFill(
       return 'nothing to summarise yet'
     }
 
-    const sum = (usages: Usage[]): Side => ({
-      calls: usages.length,
-      input: usages.reduce((n, u) => n + (u === undefined ? 0 : u.cache_read_input_tokens + u.input_tokens), 0),
-      out: usages.reduce((n, u) => n + (u?.output_tokens ?? 0), 0),
-    })
-    const add = (to: Side, by: Side): Side => ({ calls: to.calls + by.calls, input: to.input + by.input, out: to.out + by.out })
     const none: Side = { calls: 0, input: 0, out: 0 }
+    // A call that failed counts as a call that cost nothing.
+    const sum = (usages: Usage[]): Side =>
+      usages.reduce<Side>((side, u) => addSide(side, u === undefined ? { ...none, calls: 1 } : sideOf(u)), none)
     const askSide = sum(askUsages)
     const replySide = sum(replyUsages)
     const used = askSide.input + replySide.input
     const out = askSide.out + replySide.out
     spent = {
-      ...add(spent, add(askSide, replySide)),
-      quota: spent.quota,
-      asks: add(spent.asks ?? none, askSide),
-      replies: add(spent.replies ?? none, replySide),
+      ...addSide(spent, addSide(askSide, replySide)),
+      asks: addSide(spent.asks ?? none, askSide),
+      replies: addSide(spent.replies ?? none, replySide),
     }
-    // The quota windows move in tenths of a percent, so the difference across
-    // the call is what this summary actually took out of the subscription.
-    const quota = Math.max(0, quotaOf(await $.session.usage()) - before)
-    spent.quota += quota
     await put($, `${storeKey}:spent`, spent)
     redrawPane($)
 
@@ -1378,7 +1396,6 @@ async function runFill(
 
     return `summarised ${written} of ${asked} in ${seconds.toFixed(1)}s${partial}`
       + ` · ${k(used)} in, ${k(out)} out`
-      + ` · ${quota.toFixed(1)}% of the 5h window`
   } finally {
     filling = false
     if (isRetried) {
@@ -1468,7 +1485,7 @@ async function loadOnce($: EngineInterface, language: string): Promise<string> {
   if (!loaded) {
     void touchIndex($, id).catch(() => undefined)
     spent = ((await $.store.get(`${storeKey}:spent`)) as Spent | undefined)
-      ?? { calls: 0, input: 0, out: 0, quota: 0 }
+      ?? { calls: 0, input: 0, out: 0 }
     const stored = ((await $.store.get(storeKey)) as Record<string, unknown>) ?? {}
     // v0 stored one string per turn. Those lack the ask side, so drop them and
     // let a fill write both — a refill is one call, not one per turn.
@@ -1789,7 +1806,7 @@ export const register: Register = (on, options) => {
           '  /timeline                 open the pane, or close it if it is open',
           '  /timeline find [words]    search the turns by meaning; bare, hides or shows the search box',
           '  /timeline fill            summarise everything missing now',
-          '  /timeline cost            what the summaries took: prompts, replies, share of the 5h window',
+          '  /timeline cost            tokens the summaries used, and an estimate in dollars',
           '  /timeline lang <name>     ' + LANGUAGES.join(' | '),
           '  /timeline replies on|off  write the reply side, or only the ask',
           '',

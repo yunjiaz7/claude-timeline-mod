@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cardOf, cells, chunksOf, clean, costText, fitCount, lastTop, meterOf, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
+import { cardOf, cells, chunksOf, clean, costText, fitCount, lastTop, meterOf, keyOf, meterParts, nearest, oldestFifth, tailOf, fitTop, usdOf, parseAsks, parseFill, parseFind, pendingOf, resolveLanguage, resolveVerb, rowsOf, verbOf, wrapCells } from './register'
 
 // The bug real data exposed: commands are almost all `cd x && real`,
 // so taking the first word tallied `cd×N` and said nothing.
@@ -153,7 +153,7 @@ test('chunksOf cuts a list into runs of the given size', () => {
 
 test('costText splits prompts from replies and keeps what was spent before the split', () => {
   const text = costText(
-    { calls: 10, input: 9000, out: 900, quota: 0.2,
+    { calls: 10, input: 9000, out: 900,
       asks: { calls: 3, input: 1000, out: 100 }, replies: { calls: 4, input: 5000, out: 600 } },
     true,
   )
@@ -161,7 +161,16 @@ test('costText splits prompts from replies and keeps what was spent before the s
   expect(text).toContain('replies     4 calls · 5.0k in / 600 out · ≈ $0.008')
   expect(text).toContain('earlier     3 calls · 3.0k in / 200 out')
   expect(text).toContain('/timeline replies off')
-  expect(costText({ calls: 0, input: 0, out: 0, quota: 0 }, true)).toContain('nothing spent')
+  expect(text).toContain('an estimate')
+  expect(text).not.toContain('% of the 5h window')
+  expect(costText({ calls: 0, input: 0, out: 0 }, true)).toContain('nothing spent')
+})
+
+test('usdOf prices cache reads and writes apart from plain input', () => {
+  // 1M plain in, 1M cached, 1M written, 1M out: $1 + $0.10 + $1.25 + $5.
+  expect(usdOf({ calls: 1, input: 3e6, out: 1e6, cached: 1e6, written: 1e6 }).toFixed(2)).toBe('7.35')
+  // Stored before the split: all input priced as plain.
+  expect(usdOf({ calls: 1, input: 1e6, out: 0 }).toFixed(2)).toBe('1.00')
 })
 
 test('wrapCells breaks at a space when it can and mid-word when it cannot', () => {

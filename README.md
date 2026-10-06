@@ -49,7 +49,7 @@ Other ways to install, from a terminal or a clone: see the [guide](docs/guide.md
 | `/timeline find` | Show or hide the search box at the top of the pane. |
 | `/timeline lang <language>` | Write summaries in another language, e.g. `/timeline lang Chinese`. Without a language, shows the current one. |
 | `/timeline replies off` | Stop writing the "what Claude did" line, to save tokens. `/timeline replies on` brings it back. |
-| `/timeline cost` | Show how many tokens the summaries have used, and how much of your 5-hour limit. |
+| `/timeline cost` | Show how many tokens the summaries have used, with an estimate in dollars. |
 | `/timeline help` | List every command and your current settings. |
 
 All commands, settings and where the pane draws: see the [guide](docs/guide.md).
@@ -58,8 +58,8 @@ All commands, settings and where the pane draws: see the [guide](docs/guide.md).
 
 Summaries are written by Haiku on your own Claude account. Nothing is spent
 while the pane is closed, and each summary is written once. In one session,
-118 prompts took 3.8k input and 1.9k output tokens:
-under 0.1% of the 5-hour limit on a Max 20x plan.
+118 prompts took 3.8k input and 1.9k output tokens, too few to move the
+5-hour usage meter on a Max 20x plan.
 
 Everything goes through your own Claude Code session; the mod has no network,
 file or process access of its own. Exactly what is sent and stored: see the
