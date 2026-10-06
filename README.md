@@ -44,12 +44,13 @@ Other ways to install, from a terminal or a clone: see the [guide](docs/guide.md
 
 | Command | What it does |
 |---|---|
-| `/timeline` | Open or close the pane |
-| `/timeline find <words>` | Search; `/timeline find` alone hides or shows the box |
-| `/timeline lang [name]` | Show or set the summary language |
-| `/timeline replies on\|off` | Summarise what Claude did, or only your asks |
-| `/timeline cost` | What the summaries have cost |
-| `/timeline help` | Everything else |
+| `/timeline` | Open the timeline pane. Run it again to close it. |
+| `/timeline find <words>` | Search your past prompts by meaning, e.g. `/timeline find where we added tests`. |
+| `/timeline find` | Show or hide the search box at the top of the pane. |
+| `/timeline lang <language>` | Write summaries in another language, e.g. `/timeline lang Chinese`. Without a language, shows the current one. |
+| `/timeline replies off` | Stop writing the "what Claude did" line, to save tokens. `/timeline replies on` brings it back. |
+| `/timeline cost` | Show how many tokens the summaries have used, and how much of your 5-hour limit. |
+| `/timeline help` | List every command and your current settings. |
 
 All commands, settings and where the pane draws: see the [guide](docs/guide.md).
 

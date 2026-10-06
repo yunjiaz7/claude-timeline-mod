@@ -40,14 +40,14 @@ The full reference. For a quick start, see the [README](../README.md).
 
 | Command | What it does |
 |---|---|
-| `/timeline` | Open the pane, or close it if it is open |
-| `/timeline find` | Hide or show the search box (shown by default) |
-| `/timeline find <words>` | Search right away |
-| `/timeline fill` | Summarise every turn that has no summary yet, now |
-| `/timeline cost` | What the summaries in this session have cost |
-| `/timeline lang [name]` | Show or set the summary language |
-| `/timeline replies on\|off` | Write the "what Claude did" line, or summarise only your asks |
-| `/timeline help` | All commands and the current settings |
+| `/timeline` | Open the timeline pane. Run it again to close it. |
+| `/timeline find <words>` | Search your past prompts by meaning, e.g. `/timeline find where we added tests`. |
+| `/timeline find` | Show or hide the search box at the top of the pane. |
+| `/timeline lang <language>` | Write summaries in another language, e.g. `/timeline lang Chinese`. Without a language, shows the current one. |
+| `/timeline replies off` | Stop writing the "what Claude did" line, to save tokens. `/timeline replies on` brings it back. |
+| `/timeline cost` | Show how many tokens the summaries have used, and how much of your 5-hour limit. |
+| `/timeline fill` | Write any missing summaries now, instead of waiting for the pane to catch up. |
+| `/timeline help` | List every command and your current settings. |
 
 A near miss is accepted: `/timeline fil`, `/timeline lng`.
 
