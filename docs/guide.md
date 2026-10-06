@@ -109,8 +109,6 @@ Summaries are written by Haiku on your own Claude account.
   run yet. It is retried quietly; `/timeline fill` forces it.
 - **`Unknown command: /timeline`** right after installing from a terminal or
   with `!claude plugin install`: run `/reload-plugins`, or start a new session.
-- **`/timeline` only says "nothing recorded yet".** The session has no prompts
-  yet; send one, then run `/timeline` again.
 - **Nothing happens on `/timeline`.** Check that `/plugin` lists `timeline` and
   that Claude Code is v2.1.287 or later.
 

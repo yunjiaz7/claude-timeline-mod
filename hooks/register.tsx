@@ -1913,10 +1913,6 @@ export const register: Register = (on, options) => {
       return { text: `${line === '' ? 'every turn already has a summary.' : line}${total}` }
     }
 
-    if (rows.length === 0) {
-      return { text: 'nothing recorded yet.' }
-    }
-
     const opened = await $.ui.open({ id: PANE, title: 'Timeline' })
     if (opened.isPlaced) {
       // Opening it is the signal that someone wants to read it: catch up on
@@ -1924,6 +1920,9 @@ export const register: Register = (on, options) => {
       const line = await runFill($, rows, storeKey, language, tailOf(messages), doReplies)
 
       return { text: line === '' ? 'pane opened' : `${line}` }
+    }
+    if (rows.length === 0) {
+      return { text: 'nothing recorded yet.' }
     }
     // No pane here: Remote Control and the VS Code extension attach no pane
     // surface (anthropics/claude-code#99217, #99045), and a narrow terminal
@@ -2058,7 +2057,6 @@ export const register: Register = (on, options) => {
             <Box flexDirection="row">{run(right, 'mr')}</Box>
           </Box>
         )}
-        {rows.length === 0 && <Text color="text" dimColor>Nothing yet.</Text>}
         {isFinding && Input !== undefined && (
           <Box flexDirection="column">
             <Box borderStyle="round" borderColor="claude" paddingX={1}>
@@ -2097,6 +2095,12 @@ export const register: Register = (on, options) => {
               <Text color="claude" bold>/timeline find</Text>
               <Text color="inactive">hides the search box</Text>
             </Box>
+          </Box>
+        )}
+        {/* An empty session still opens the pane, so say what will fill it. */}
+        {rows.length === 0 && (
+          <Box paddingX={2}>
+            <Text color="text" dimColor>No prompts yet. A card appears here for each prompt you send.</Text>
           </Box>
         )}
         {(isFinding ? shown.slice(findTop, findTop + drawnCount) : shown).map(row => {

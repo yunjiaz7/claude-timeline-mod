@@ -110,7 +110,6 @@ smaller differences are noise.
 
 - **`Unknown command: /timeline`** after installing from a terminal: run
   `/reload-plugins`, or start a new session.
-- **"nothing recorded yet"**: send a prompt first.
 - **The pane is blank**: a dim `timeline: ui.render …` line in the transcript
   says why. Please open an issue with it.
 
