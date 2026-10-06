@@ -57,7 +57,9 @@ All commands, settings and where the pane draws: see the [guide](docs/guide.md).
 
 Summaries are written by Haiku on your own Claude account. Nothing is spent
 while the pane is closed, and each summary is written once. In one session,
-118 prompts took 3.8k input and 1.9k output tokens.
+118 prompts took 3.8k input and 1.9k output tokens:
+under 0.1% of the 5-hour limit on a Max 20x plan, so under 0.4% on Max 5x
+and under 2% on Pro.
 
 Everything goes through your own Claude Code session; the mod has no network,
 file or process access of its own. Exactly what is sent and stored: see the
